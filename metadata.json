@@ -1,0 +1,8 @@
+{
+  "name": "ARH-LTC MDRO Hub",
+  "description": "The official clinical intelligence and educational platform for MDRO prevention at ARH-LTC. Compatible with https://arh-ltc-mdro-hub-314466822792.us-west1.run.app",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}

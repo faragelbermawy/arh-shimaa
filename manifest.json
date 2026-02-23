@@ -1,0 +1,22 @@
+
+{
+  "name": "ARH-LTC MDRO Hub v1.0.5",
+  "short_name": "ARH-LTC Hub",
+  "description": "The official educational platform for MDRO prevention and infection control at ARH-LTC.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3063/3063205.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3063/3063205.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

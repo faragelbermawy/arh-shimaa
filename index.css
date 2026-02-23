@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  :root {
+    --sat: env(safe-area-inset-top);
+    --sar: env(safe-area-inset-right);
+    --sab: env(safe-area-inset-bottom);
+    --sal: env(safe-area-inset-left);
+  }
+
+  html, body {
+    height: 100%;
+    height: -webkit-fill-available;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body { 
+    font-family: 'Plus Jakarta Sans', sans-serif; 
+    -webkit-tap-highlight-color: transparent;
+    background-color: #f8fafc;
+  }
+
+  #root {
+    height: 100%;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+  .animate-ecg {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: ecg-flow 4s linear infinite;
+  }
+
+  @keyframes ecg-flow {
+    0% { stroke-dashoffset: 1000; }
+    100% { stroke-dashoffset: 0; }
+  }
+
+  .font-arabic { font-family: 'Noto Sans Arabic', sans-serif; }
+
+  .h-screen-fix {
+    height: 100vh;
+    height: 100dvh;
+  }
+}
