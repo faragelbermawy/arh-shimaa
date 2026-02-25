@@ -23,7 +23,8 @@ import { WHO_5_MOMENTS, PPE_DATA, ENVIRONMENTAL_CHECKLIST, EQUIPMENT_CHECKLIST, 
 import { gemini } from '../services/geminiService';
 import { storageService } from '../services/storageService';
 import { syncService } from '../services/syncService';
-import { saveData, sendToCloud } from '../services/firebase';
+import { db, saveData, sendToCloud, deleteFromCloud } from '../services/firebase';
+import { ref, onValue } from "firebase/database";
 
 const WeeklyAudit: React.FC = () => {
   const navigate = useNavigate();
@@ -48,11 +49,43 @@ const WeeklyAudit: React.FC = () => {
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains('dark'));
     setIsAdmin(sessionStorage.getItem('is_admin_active') === 'true');
-    const interval = setInterval(() => {
-      setAudits(storageService.getAudits());
-      setIsAdmin(sessionStorage.getItem('is_admin_active') === 'true');
-    }, 2000);
-    return () => clearInterval(interval);
+    
+    // Initial load
+    setAudits(storageService.getAudits());
+
+    // Real-time listener for audits
+    const auditsRef = ref(db, 'audits');
+    const unsubscribe = onValue(auditsRef, (snapshot) => {
+      const val = snapshot.val();
+      if (val) {
+        const list: any[] = [];
+        Object.keys(val).forEach(key => {
+          const item = val[key];
+          if (item.id && (item.totalScore !== undefined || item.score !== undefined)) {
+            list.push({ id: key, ...item });
+          } else if (typeof item === 'object') {
+            Object.keys(item).forEach(subKey => {
+              list.push({ id: subKey, auditType: key, ...item[subKey] });
+            });
+          }
+        });
+        
+        setAudits(prev => {
+          const combined = [...prev];
+          list.forEach(item => {
+            if (!combined.find(c => c.id === item.id)) combined.push(item);
+          });
+          // Sort by timestamp descending
+          return combined.sort((a, b) => {
+            const dateA = new Date(a.timestamp || 0).getTime();
+            const dateB = new Date(b.timestamp || 0).getTime();
+            return dateB - dateA;
+          });
+        });
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const getActiveChecklistData = () => {
@@ -215,9 +248,15 @@ const WeeklyAudit: React.FC = () => {
     }
   };
 
-  const handleDeleteAudit = (id: string, e: React.MouseEvent) => {
+  const handleDeleteAudit = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (window.confirm("Purge this audit record from history?")) {
+      // Find the audit to get its type for the path
+      const audit = audits.find(a => a.id === id);
+      if (audit) {
+        const path = audit.auditType ? `audits/${audit.auditType}` : 'audits';
+        await deleteFromCloud(path, id);
+      }
       storageService.deleteAudit(id);
       setAudits(storageService.getAudits());
     }

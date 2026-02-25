@@ -309,7 +309,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-1">DESIGNED BY FARAG ELBERMAWY LTC</p>
           <p className="text-[8px] font-bold uppercase tracking-widest mb-4">ARH-LTC Clinical Intelligence Hub</p>
           <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-            Version: 1.0.6 — Build: 2026-02-25
+            Version: 1.0.9 — Build: 2026-02-25
           </div>
         </footer>
       </main>

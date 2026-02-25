@@ -39,7 +39,7 @@ import {
   FileUp as FileUpIcon,
   CheckCircle
 } from 'lucide-react';
-import { db, sendToCloud } from '../services/firebase';
+import { db, sendToCloud, deleteFromCloud, clearCloudPath } from '../services/firebase';
 import { ref, onValue } from "firebase/database";
 import { AuditType, ClinicalReport } from '../types';
 import { gemini } from '../services/geminiService';
@@ -87,6 +87,7 @@ const DocsManager: React.FC = () => {
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
   const [viewingOriginal, setViewingOriginal] = useState(false);
   const [reportWithData, setReportWithData] = useState<any | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -105,6 +106,7 @@ const DocsManager: React.FC = () => {
 
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains('dark'));
+    setIsAdmin(sessionStorage.getItem('is_admin_active') === 'true');
     
     const paths = ['audits', 'reports', 'findings', 'registries'];
     const unsubscribes: (() => void)[] = [];
@@ -168,14 +170,58 @@ const DocsManager: React.FC = () => {
     if (e) {
       e.stopPropagation();
     }
+    
+    const reportToDelete = allReports.find(r => r.id === id);
+    if (!reportToDelete) return;
+
     if (window.confirm("CRITICAL: Purge this clinical record from vault?")) {
+      // 1. Delete from Firebase if it has a source path
+      if (reportToDelete.sourcePath) {
+        await deleteFromCloud(reportToDelete.sourcePath, id);
+      }
+      
+      // 2. Delete locally
       await storageService.deleteReport(id);
+      
       setAllReports(prev => prev.filter(r => r.id !== id));
       if (selectedReport?.id === id) {
         setSelectedReport(null);
         setReportWithData(null);
       }
       showToast("Record Purged");
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!isAdmin) return;
+    const confirmMsg = selectedCategory 
+      ? `CRITICAL: Purge ALL records in ${selectedCategory}?`
+      : "CRITICAL: Purge ALL clinical records in the vault?";
+      
+    if (window.confirm(confirmMsg)) {
+      setIsProcessing(true);
+      try {
+        if (selectedCategory) {
+          // Clear specific category
+          const reportsToClear = allReports.filter(r => r.auditType === selectedCategory || r.sourcePath === selectedCategory);
+          await Promise.all(reportsToClear.map(r => deleteFromCloud(r.sourcePath || 'reports', r.id)));
+          // Also clear locally
+          for (const r of reportsToClear) {
+            await storageService.deleteReport(r.id);
+          }
+        } else {
+          // Clear everything
+          const paths = ['audits', 'reports', 'findings', 'registries'];
+          await Promise.all(paths.map(path => clearCloudPath(path)));
+          await storageService.clearAllData();
+        }
+        showToast("Vault Purged Successfully");
+      } catch (e) {
+        console.error("Purge failed", e);
+        showToast("Purge Failed");
+      } finally {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -285,7 +331,7 @@ const DocsManager: React.FC = () => {
   const handleShareReport = async (report: any, platform: 'whatsapp' | 'system') => {
     const isAudit = !report.isMdroFinding;
     const score = report.totalScore || report.score || 0;
-    const appUrl = 'https://arh-ltc-mdro-hub-314466822792.us-west1.run.app/';
+    const appUrl = window.location.origin;
     
     const text = `*ARH-LTC MDRO HUB REPORT*\n\nUnit: ${report.unitName || report.department}\nType: ${isAudit ? 'Audit' : 'MDRO Finding'}\nResult: ${isAudit ? score + '%' : report.mdroTransmission}\nDate: ${report.timestamp}\n\nPortal: ${appUrl}`;
     
@@ -340,9 +386,9 @@ const DocsManager: React.FC = () => {
               equipment: analysis.equipment
             },
             totalScore: Math.round((analysis.handHygiene + analysis.ppe + analysis.environmental + analysis.equipment) / 4),
-            auditor: analysis.auditor,
-            audienceName: analysis.audienceName,
-            staffGroup: analysis.staffGroup,
+            auditor: analysis.auditor || "N/A",
+            audienceName: analysis.audienceName || "N/A",
+            staffGroup: analysis.staffGroup || "N/A",
             checkedItems: analysis.checkedItems
           };
 
@@ -458,6 +504,14 @@ const DocsManager: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto">
+          {isAdmin && (allReports.length > 0 || (selectedCategory && getCategoryCount(selectedCategory) > 0)) && (
+            <button 
+              onClick={handleClearAll}
+              className="flex-1 sm:flex-none bg-red-600/10 hover:bg-red-600 text-red-600 hover:text-white px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all border border-red-600/20 shadow-xl"
+            >
+              <Trash2 className="w-4 h-4" /> {selectedCategory ? 'Clear Category' : 'Clear All Vault'}
+            </button>
+          )}
           {selectedCategory && (
             <div className="flex gap-3 w-full sm:w-auto">
               <button 

@@ -61,115 +61,139 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    loadAllData();
-    
-    // Real-time listeners for global sync
+    setIsDarkMode(document.documentElement.classList.contains('dark'));
+    setLastGlobalSync(localStorage.getItem('mdro_last_global_sync_v2'));
+
+    // Initialize aggregated data with local storage to prevent "disappearing" data
+    // while waiting for Firebase listeners to fire.
+    const localReports = storageService.getReports();
+    const localAudits = storageService.getAudits();
+    const localVisitors = storageService.getVisitors();
+
+    const aggregatedData: {
+      audits: Record<string, AuditRecord>;
+      registries: Record<string, Visitor>;
+      findings: Record<string, ClinicalReport>;
+      reports: Record<string, ClinicalReport>;
+    } = {
+      audits: Object.fromEntries(localAudits.map(a => [a.id, a])),
+      registries: Object.fromEntries(localVisitors.map(v => [v.id, v])),
+      findings: Object.fromEntries(localReports.filter(r => r.isMdroFinding).map(r => [r.id, r])),
+      reports: Object.fromEntries(localReports.filter(r => !r.isMdroFinding).map(r => [r.id, r]))
+    };
+
+    const updateState = () => {
+      const allAudits = Object.values(aggregatedData.audits);
+      const allVisitors = Object.values(aggregatedData.registries);
+      const allFindings = Object.values(aggregatedData.findings);
+      const allReports = Object.values(aggregatedData.reports);
+
+      // Find audits within the reports path
+      const auditsFromReports = allReports.filter(r => r.totalScore !== undefined);
+
+      // Deduplicate by ID to ensure accurate counts
+      const reportMap = new Map();
+      allFindings.forEach(r => reportMap.set(r.id, r));
+      allReports.forEach(r => reportMap.set(r.id, r));
+      const finalReports = Array.from(reportMap.values());
+
+      const auditMap = new Map();
+      allAudits.forEach(a => auditMap.set(a.id, a));
+      auditsFromReports.forEach(a => auditMap.set(a.id, a));
+      const finalAudits = Array.from(auditMap.values());
+
+      const visitorMap = new Map();
+      allVisitors.forEach(v => visitorMap.set(v.id, v));
+      const finalVisitors = Array.from(visitorMap.values());
+
+      setReports(finalReports);
+      setAudits(finalAudits);
+      setVisitors(finalVisitors);
+    };
+
+    // Initial state sync
+    updateState();
+
+    const unsubscribes: (() => void)[] = [];
+
+    // Audits Listener
     const auditsRef = ref(db, 'audits');
-    const unsubscribeAudits = onValue(auditsRef, (snapshot) => {
+    unsubscribes.push(onValue(auditsRef, (snapshot) => {
       const val = snapshot.val();
-      if (val) {
-        const list: any[] = [];
-        Object.keys(val).forEach(key => {
-          const item = val[key];
-          if (item.id && (item.totalScore !== undefined || item.score !== undefined)) {
-            list.push({ id: key, ...item });
-          } else if (typeof item === 'object') {
-            Object.keys(item).forEach(subKey => {
-              list.push({ id: subKey, auditType: key, ...item[subKey] });
-            });
-          }
-        });
-        setAudits(prev => {
-          const combined = [...prev];
-          list.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
+      // Only clear if we actually got a value or null from server
+      // to avoid flickering during reconnection
+      if (val !== undefined) {
+        aggregatedData.audits = {};
+        if (val) {
+          Object.keys(val).forEach(key => {
+            const item = val[key];
+            if (item.id && item.totalScore !== undefined) {
+              aggregatedData.audits[key] = { id: key, ...item };
+            } else if (typeof item === 'object') {
+              Object.keys(item).forEach(subKey => {
+                aggregatedData.audits[subKey] = { id: subKey, auditType: key, ...item[subKey] };
+              });
+            }
           });
-          return combined;
-        });
+        }
+        updateState();
       }
-    });
+    }));
 
+    // Registries Listener
     const registriesRef = ref(db, 'registries');
-    const unsubscribeRegistries = onValue(registriesRef, (snapshot) => {
+    unsubscribes.push(onValue(registriesRef, (snapshot) => {
       const val = snapshot.val();
-      if (val) {
-        const list = Object.keys(val).map(key => ({ id: key, ...val[key] }));
-        setVisitors(prev => {
-          const combined = [...prev];
-          list.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
+      if (val !== undefined) {
+        aggregatedData.registries = {};
+        if (val) {
+          Object.keys(val).forEach(key => {
+            aggregatedData.registries[key] = { id: key, ...val[key] };
           });
-          return combined;
-        });
+        }
+        updateState();
       }
-    });
+    }));
 
+    // Findings Listener
     const findingsRef = ref(db, 'findings');
-    const unsubscribeFindings = onValue(findingsRef, (snapshot) => {
+    unsubscribes.push(onValue(findingsRef, (snapshot) => {
       const val = snapshot.val();
-      if (val) {
-        const list = Object.keys(val).map(key => ({ id: key, ...val[key], isMdroFinding: true }));
-        setReports(prev => {
-          const combined = [...prev];
-          list.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
+      if (val !== undefined) {
+        aggregatedData.findings = {};
+        if (val) {
+          Object.keys(val).forEach(key => {
+            aggregatedData.findings[key] = { id: key, ...val[key], isMdroFinding: true };
           });
-          return combined;
-        });
+        }
+        updateState();
       }
-    });
+    }));
 
+    // Reports Listener
     const reportsRef = ref(db, 'reports');
-    const unsubscribeReports = onValue(reportsRef, (snapshot) => {
+    unsubscribes.push(onValue(reportsRef, (snapshot) => {
       const val = snapshot.val();
-      if (val) {
-        const allReports: any[] = [];
-        const allAudits: any[] = [];
-        
-        Object.keys(val).forEach(type => {
-          const typeData = val[type];
-          if (typeData.id) {
-            // Flat structure
-            const item = { id: type, ...typeData };
-            allReports.push(item);
-            if (item.totalScore !== undefined || item.score !== undefined) allAudits.push(item);
-          } else if (typeof typeData === 'object' && typeData !== null) {
-            // Nested structure
-            Object.keys(typeData).forEach(id => {
-              const item = { id, auditType: type, ...typeData[id] };
-              allReports.push(item);
-              if (item.totalScore !== undefined || item.score !== undefined) {
-                allAudits.push(item);
-              }
-            });
-          }
-        });
-
-        setReports(prev => {
-          const combined = [...prev];
-          allReports.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
+      if (val !== undefined) {
+        aggregatedData.reports = {};
+        if (val) {
+          Object.keys(val).forEach(type => {
+            const typeData = val[type];
+            if (typeData.id) {
+              aggregatedData.reports[type] = { id: type, ...typeData };
+            } else if (typeof typeData === 'object' && typeData !== null) {
+              Object.keys(typeData).forEach(id => {
+                aggregatedData.reports[id] = { id, auditType: type, ...typeData[id] };
+              });
+            }
           });
-          return combined;
-        });
-
-        setAudits(prev => {
-          const combined = [...prev];
-          allAudits.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
-          });
-          return combined;
-        });
+        }
+        updateState();
       }
-    });
+    }));
 
-    const interval = setInterval(loadAllData, 5000);
     return () => {
-      clearInterval(interval);
-      unsubscribeAudits();
-      unsubscribeRegistries();
-      unsubscribeFindings();
-      unsubscribeReports();
+      unsubscribes.forEach(unsub => unsub());
     };
   }, []);
 
@@ -197,9 +221,23 @@ const Dashboard: React.FC = () => {
     const now = new Date();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     
+    const parseDate = (dateStr: string) => {
+      if (!dateStr) return new Date(0);
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) return d;
+      
+      // Handle "25 Feb 2026, 06:00" format
+      try {
+        const parts = dateStr.split(',');
+        return new Date(parts[0]);
+      } catch (e) {
+        return new Date(0);
+      }
+    };
+
     const weekAudits = audits.filter(a => {
-      const auditDate = new Date(a.timestamp);
-      return !isNaN(auditDate.getTime()) ? auditDate >= oneWeekAgo : true; // Fallback if date parsing fails for some reason
+      const auditDate = parseDate(a.timestamp);
+      return auditDate >= oneWeekAgo;
     });
 
     const typeCounts: Record<string, number> = {};
@@ -231,6 +269,9 @@ const Dashboard: React.FC = () => {
           <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5">
             <HardDrive className="w-3 h-3" /> Clinical Node Secured
           </p>
+        </div>
+        <div className="bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg">
+          <p className="text-[8px] font-black text-blue-600 uppercase tracking-widest">v1.0.9 Stable</p>
         </div>
         {lastGlobalSync && (
           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">

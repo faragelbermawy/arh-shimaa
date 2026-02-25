@@ -26,7 +26,8 @@ import {
 import { gemini } from '../services/geminiService';
 import { storageService } from '../services/storageService';
 import { syncService } from '../services/syncService';
-import { sendToCloud } from '../services/firebase';
+import { db, sendToCloud, deleteFromCloud } from '../services/firebase';
+import { ref, onValue } from "firebase/database";
 import { ClinicalReport, UserProgress } from '../types';
 import { jsPDF } from 'jspdf';
 
@@ -48,8 +49,29 @@ const MdroArchive: React.FC = () => {
   useEffect(() => {
     loadAllData();
     setIsDarkMode(document.documentElement.classList.contains('dark'));
-    const interval = setInterval(loadAllData, 2000);
-    return () => clearInterval(interval);
+    
+    // Real-time listener for findings
+    const findingsRef = ref(db, 'findings');
+    const unsubscribe = onValue(findingsRef, (snapshot) => {
+      const val = snapshot.val();
+      if (val) {
+        const list = Object.keys(val).map(key => ({ id: key, ...val[key], isMdroFinding: true }));
+        setReports(prev => {
+          const combined = [...prev];
+          list.forEach(item => {
+            if (!combined.find(c => c.id === item.id)) combined.push(item);
+          });
+          // Sort by timestamp descending
+          return combined.sort((a, b) => {
+            const dateA = new Date(a.timestamp || 0).getTime();
+            const dateB = new Date(b.timestamp || 0).getTime();
+            return dateB - dateA;
+          });
+        });
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const loadAllData = () => {
@@ -174,7 +196,7 @@ const MdroArchive: React.FC = () => {
     handleDownloadReport(report);
     
     if (platform === 'whatsapp') {
-      const appUrl = 'https://arh-ltc-mdro-hub-314466822792.us-west1.run.app/';
+      const appUrl = window.location.origin;
       const text = `*MDRO ALERT - ARH-LTC*\n\nOrganism: ${report.mdroTransmission}\nUnit: ${report.unitName}\n\nPDF report downloaded to terminal. Please attach it to this message manually.\n\nPortal: ${appUrl}`;
       const waUrl = `https://wa.me/${managerPhone}?text=${encodeURIComponent(text)}`;
       window.open(waUrl, '_blank');
@@ -208,6 +230,9 @@ const MdroArchive: React.FC = () => {
           status: 'analyzed',
           isMdroFinding: true,
           checkedItems: result.checkedItems,
+          auditor: result.auditor || "N/A",
+          audienceName: result.audienceName || "N/A",
+          staffGroup: result.staffGroup || "N/A",
           fileData: fileData,
           fileMimeType: file.type
         };
@@ -231,10 +256,11 @@ const MdroArchive: React.FC = () => {
     }
   };
 
-  const deleteFinding = (e: React.MouseEvent, id: string) => {
+  const deleteFinding = async (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
     if (window.confirm("CRITICAL: Purge this MDRO finding from archive?")) {
+      await deleteFromCloud('findings', id);
       storageService.deleteReport(id);
       loadAllData();
       showLocalToast("Record Purged");

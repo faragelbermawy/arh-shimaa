@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, push, set, get, child } from "firebase/database";
+import { getDatabase, ref, push, set, get, child, remove } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD9Rdk6hZqHMgodSXcEaaeXsOP7V0RDSA",
@@ -12,16 +12,51 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
 
-export const sendData = (path: string, data: any) => push(ref(db, path), { ...data, date: new Date().toISOString() });
+/**
+ * دالة لتنظيف البيانات من قيم undefined التي لا يقبلها Firebase
+ */
+const sanitize = (data: any) => {
+  return JSON.parse(JSON.stringify(data));
+};
+
+export const sendData = (path: string, data: any) => push(ref(db, path), sanitize({ ...data, date: new Date().toISOString() }));
+
+/**
+ * دالة لحذف بيان محدد من مسار معين
+ */
+export const deleteFromCloud = async (path: string, id: string) => {
+  try {
+    const dbRef = ref(db, `${path}/${id}`);
+    await remove(dbRef);
+    return true;
+  } catch (error) {
+    console.error("Firebase Delete Error:", error);
+    return false;
+  }
+};
+
+/**
+ * دالة لمسح مسار كامل (للبدء من جديد)
+ */
+export const clearCloudPath = async (path: string) => {
+  try {
+    const dbRef = ref(db, path);
+    await remove(dbRef);
+    return true;
+  } catch (error) {
+    console.error("Firebase Clear Error:", error);
+    return false;
+  }
+};
 
 // دالة موحدة لكل الأزرار
 export const sendToCloud = async (folderName: string, data: any) => {
   try {
     const dbRef = ref(db, folderName); // folderName سيكون 'audits' أو 'registries'
-    await push(dbRef, {
+    await push(dbRef, sanitize({
       ...data,
       serverTime: new Date().toISOString()
-    });
+    }));
     return true;
   } catch (error) {
     console.error("Cloud Error:", error);
@@ -35,10 +70,10 @@ export const sendToCloud = async (folderName: string, data: any) => {
 export const saveData = async (path: string, data: any) => {
   try {
     const dbRef = ref(db, path);
-    return await push(dbRef, {
+    return await push(dbRef, sanitize({
       ...data,
       timestamp: new Date().toISOString()
-    });
+    }));
   } catch (error) {
     console.error("Firebase Save Error:", error);
     throw error;
@@ -50,10 +85,10 @@ export const saveData = async (path: string, data: any) => {
  */
 export const syncAllData = async (path: string, dataArray: any[]) => {
   const dbRef = ref(db, path);
-  const promises = dataArray.map(item => push(dbRef, {
+  const promises = dataArray.map(item => push(dbRef, sanitize({
     ...item,
     syncTimestamp: new Date().toISOString()
-  }));
+  })));
   return Promise.all(promises);
 };
 
@@ -61,10 +96,10 @@ export const syncAllData = async (path: string, dataArray: any[]) => {
 export const pushToVault = async (vaultId: string, data: any) => {
   try {
     const dbRef = ref(db, `vaults/${vaultId}`);
-    await set(dbRef, {
+    await set(dbRef, sanitize({
       data,
       timestamp: new Date().toISOString()
-    });
+    }));
     return true;
   } catch (error) {
     console.error("Vault Push Error:", error);

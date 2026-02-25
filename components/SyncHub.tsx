@@ -23,8 +23,8 @@ import {
 } from 'lucide-react';
 import { syncService, SyncMode } from '../services/syncService';
 import { storageService } from '../services/storageService';
-import { syncAllData } from '../services/firebase';
-import { CloudUpload } from 'lucide-react';
+import { syncAllData, clearCloudPath } from '../services/firebase';
+import { CloudUpload, ShieldAlert } from 'lucide-react';
 
 const SyncHub: React.FC = () => {
   const [syncToken, setSyncToken] = useState('');
@@ -109,7 +109,7 @@ const SyncHub: React.FC = () => {
       alert("Key is too long for a direct WhatsApp link. It has been copied to your clipboard. Please paste it manually in the chat.");
       return;
     }
-    const appUrl = 'https://arh-ltc-mdro-hub-314466822792.us-west1.run.app/';
+    const appUrl = window.location.origin;
     const text = `*MDRO HUB SYNC (${selectedMode.toUpperCase()})*\n\nPaste this clinical key:\n\n${syncToken}\n\nPortal: ${appUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
@@ -118,6 +118,22 @@ const SyncHub: React.FC = () => {
     if (window.confirm("CRITICAL: Wipe ALL terminal data? This will clear all progress, reports, and audits permanently.")) {
       storageService.clearAllData();
       window.location.reload();
+    }
+  };
+
+  const handleCloudReset = async () => {
+    if (!isAdmin) return;
+    if (window.confirm("⚠️ WARNING: This will permanently delete ALL data from the CLOUD (Firebase). This cannot be undone. Are you sure?")) {
+      setIsProcessing(true);
+      try {
+        const paths = ['audits', 'registries', 'findings', 'reports', 'vaults'];
+        await Promise.all(paths.map(path => clearCloudPath(path)));
+        setStatus({ type: 'success', message: 'Cloud Database Cleared Successfully.' });
+      } catch (e) {
+        setStatus({ type: 'error', message: 'Failed to clear cloud database.' });
+      } finally {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -422,9 +438,14 @@ const SyncHub: React.FC = () => {
                 <FileJson className="w-5 h-5 text-blue-600" /> DOWNLOAD ARCHIVE
             </button>
             {isAdmin && (
-              <button onClick={handleFactoryReset} className="text-red-600 font-black text-[8px] uppercase tracking-widest flex items-center justify-center gap-2 hover:underline">
-                 <Trash2 className="w-3 h-3" /> Factory Reset Terminal
-              </button>
+              <div className="flex flex-col gap-2">
+                <button onClick={handleFactoryReset} className="text-red-600 font-black text-[8px] uppercase tracking-widest flex items-center justify-center gap-2 hover:underline">
+                   <Trash2 className="w-3 h-3" /> Factory Reset Terminal
+                </button>
+                <button onClick={handleCloudReset} className="text-red-500 font-black text-[8px] uppercase tracking-widest flex items-center justify-center gap-2 hover:underline">
+                   <ShieldAlert className="w-3 h-3" /> Master Cloud Reset (Firebase)
+                </button>
+              </div>
             )}
          </div>
       </section>

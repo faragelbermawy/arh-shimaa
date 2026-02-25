@@ -4,7 +4,8 @@ import { ClipboardList, UserPlus, History, CheckCircle, Lock, AlertCircle, Datab
 import { Visitor } from '../types';
 import { storageService } from '../services/storageService';
 import { syncService } from '../services/syncService';
-import { saveData, sendToCloud } from '../services/firebase';
+import { db, saveData, sendToCloud, deleteFromCloud } from '../services/firebase';
+import { ref, onValue } from "firebase/database";
 
 const VisitorRegistry: React.FC = () => {
   const [visitors, setVisitors] = useState<Visitor[]>(storageService.getVisitors());
@@ -14,8 +15,33 @@ const VisitorRegistry: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   useEffect(() => {
-    setVisitors(storageService.getVisitors());
     setIsDarkMode(document.documentElement.classList.contains('dark'));
+    
+    // Initial load
+    setVisitors(storageService.getVisitors());
+
+    // Real-time listener for registries
+    const registriesRef = ref(db, 'registries');
+    const unsubscribe = onValue(registriesRef, (snapshot) => {
+      const val = snapshot.val();
+      if (val) {
+        const list = Object.keys(val).map(key => ({ id: key, ...val[key] }));
+        setVisitors(prev => {
+          const combined = [...prev];
+          list.forEach(item => {
+            if (!combined.find(c => c.id === item.id)) combined.push(item);
+          });
+          // Sort by timestamp descending
+          return combined.sort((a, b) => {
+            const dateA = new Date(a.timestamp || 0).getTime();
+            const dateB = new Date(b.timestamp || 0).getTime();
+            return dateB - dateA;
+          });
+        });
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const handleCheckIn = async (e: React.FormEvent) => {
@@ -51,9 +77,10 @@ const VisitorRegistry: React.FC = () => {
     setDept('');
   };
 
-  const handleDeleteVisitor = (id: string, e: React.MouseEvent) => {
+  const handleDeleteVisitor = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (window.confirm("Purge this visitor log from history?")) {
+      await deleteFromCloud('registries', id);
       storageService.deleteVisitor(id);
       setVisitors(storageService.getVisitors());
     }
