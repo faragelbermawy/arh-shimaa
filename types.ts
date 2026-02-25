@@ -33,7 +33,7 @@ export interface ClinicalReport {
   mdroTransmission?: string;
   reportDate?: string;
   timestamp: string;
-  analysisDate: string;
+  analysisDate?: string;
   extractedScores: {
     handHygiene: number;
     ppe: number;
@@ -41,7 +41,8 @@ export interface ClinicalReport {
     equipment: number;
   };
   summary: string;
-  status: 'pending' | 'analyzed' | 'error';
+  status?: 'pending' | 'analyzed' | 'error';
+  totalScore?: number;
   isMdroFinding?: boolean;
   auditType?: AuditType | 'mdro-finding';
   checkedItems?: string[]; 
@@ -74,6 +75,7 @@ export interface UserProgress {
 
 export interface PPEStep {
   title: string;
+  ar?: string;
   description: string;
   image?: string;
   icon?: any;

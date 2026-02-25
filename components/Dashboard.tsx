@@ -68,7 +68,17 @@ const Dashboard: React.FC = () => {
     const unsubscribeAudits = onValue(auditsRef, (snapshot) => {
       const val = snapshot.val();
       if (val) {
-        const list = Object.keys(val).map(key => ({ id: key, ...val[key] }));
+        const list: any[] = [];
+        Object.keys(val).forEach(key => {
+          const item = val[key];
+          if (item.id && (item.totalScore !== undefined || item.score !== undefined)) {
+            list.push({ id: key, ...item });
+          } else if (typeof item === 'object') {
+            Object.keys(item).forEach(subKey => {
+              list.push({ id: subKey, auditType: key, ...item[subKey] });
+            });
+          }
+        });
         setAudits(prev => {
           const combined = [...prev];
           list.forEach(item => {
@@ -113,10 +123,39 @@ const Dashboard: React.FC = () => {
     const unsubscribeReports = onValue(reportsRef, (snapshot) => {
       const val = snapshot.val();
       if (val) {
-        const list = Object.keys(val).map(key => ({ id: key, ...val[key] }));
+        const allReports: any[] = [];
+        const allAudits: any[] = [];
+        
+        Object.keys(val).forEach(type => {
+          const typeData = val[type];
+          if (typeData.id) {
+            // Flat structure
+            const item = { id: type, ...typeData };
+            allReports.push(item);
+            if (item.totalScore !== undefined || item.score !== undefined) allAudits.push(item);
+          } else if (typeof typeData === 'object' && typeData !== null) {
+            // Nested structure
+            Object.keys(typeData).forEach(id => {
+              const item = { id, auditType: type, ...typeData[id] };
+              allReports.push(item);
+              if (item.totalScore !== undefined || item.score !== undefined) {
+                allAudits.push(item);
+              }
+            });
+          }
+        });
+
         setReports(prev => {
           const combined = [...prev];
-          list.forEach(item => {
+          allReports.forEach(item => {
+            if (!combined.find(c => c.id === item.id)) combined.push(item);
+          });
+          return combined;
+        });
+
+        setAudits(prev => {
+          const combined = [...prev];
+          allAudits.forEach(item => {
             if (!combined.find(c => c.id === item.id)) combined.push(item);
           });
           return combined;

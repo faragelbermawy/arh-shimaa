@@ -25,10 +25,10 @@ const AppContent: React.FC = () => {
     // Ensure data migrations are handled on startup
     storageService.migrate();
 
-    // Fallback: Force hide splash screen after 10 seconds
+    // Fallback: Force hide splash screen after 5 seconds
     const timer = setTimeout(() => {
       setShowSplash(false);
-    }, 10000);
+    }, 5000);
 
     return () => clearTimeout(timer);
   }, []);
@@ -50,6 +50,7 @@ const AppContent: React.FC = () => {
           <Route path="/registry" element={<VisitorRegistry />} />
           <Route path="/audit" element={<WeeklyAudit />} />
           <Route path="/docs" element={<DocsManager />} />
+          <Route path="/vault" element={<DocsManager />} />
           <Route path="/mdro-archive" element={<MdroArchive />} />
           <Route path="/sync" element={<SyncHub />} />
           <Route path="/golden-files" element={<GoldenFiles />} />

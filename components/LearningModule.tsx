@@ -118,7 +118,7 @@ const LearningModule: React.FC = () => {
               <footer className="pt-10 border-t border-slate-50 dark:border-white/5 flex items-center justify-between">
                  <div className="flex items-center gap-3">
                     <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Permanent Application Resource V3.0</span>
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Permanent Application Resource V3.1</span>
                  </div>
                  <div className="text-right">
                     <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest">Updated Feb 2025</p>
@@ -251,7 +251,7 @@ const LearningModule: React.FC = () => {
                   </div>
                   <div className="text-center md:text-right">
                      <p className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.4em] mb-1">DESIGNED BY FARAG ELBERMAWY LTC</p>
-                     <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">ARH-LTC Operational Intel Hub V3.0</p>
+                     <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">ARH-LTC Operational Intel Hub V3.1</p>
                   </div>
                </div>
             </div>
@@ -278,8 +278,14 @@ const LearningModule: React.FC = () => {
                   </div>
                 )}
                 <div className="flex-1">
-                  <h5 className="font-black text-slate-800 dark:text-white text-base uppercase tracking-tight">{step.en.replace(/Donning: |Doffing: /g, '')}</h5>
-                  <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold leading-relaxed mt-1">{step.descEn}</p>
+                  <div className="flex justify-between items-start">
+                    <h5 className="font-black text-slate-800 dark:text-white text-base uppercase tracking-tight">{step.en.replace(/Donning: |Doffing: /g, '')}</h5>
+                    <h5 className="font-black text-slate-800 dark:text-white text-base font-arabic" dir="rtl">{step.ar.replace(/الارتداء: |الخلع: /g, '')}</h5>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1">
+                    <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold leading-relaxed">{step.descEn}</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold leading-relaxed font-arabic text-right" dir="rtl">{step.descAr}</p>
+                  </div>
                 </div>
               </div>
             ))}
@@ -384,7 +390,7 @@ const LearningModule: React.FC = () => {
                       <p className="text-slate-500 dark:text-slate-400 text-sm md:text-lg font-medium leading-relaxed">Evidence-based protocols following WHO and GDIPC guidelines for MDRO prevention in healthcare facilities. This module ensures all personnel and visitors maintain the highest levels of safety and transmission control.</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
                          <div className="flex items-center gap-3 text-[10px] font-black uppercase text-slate-400">
-                            <ShieldCheck className="w-4 h-4 text-emerald-500" /> GDIPC V3.0 Compliant
+                            <ShieldCheck className="w-4 h-4 text-emerald-500" /> GDIPC V3.1 Compliant
                          </div>
                          <div className="flex items-center gap-3 text-[10px] font-black uppercase text-slate-400">
                             <Clock className="w-4 h-4 text-blue-500" /> Updated Feb 2025

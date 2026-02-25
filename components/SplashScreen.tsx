@@ -7,11 +7,11 @@ const SplashScreen: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
 
   useEffect(() => {
     const stages = [
-      setTimeout(() => setStage(1), 500),
-      setTimeout(() => setStage(2), 1500),
-      setTimeout(() => setStage(3), 3000),
-      setTimeout(() => setStage(4), 5000),
-      setTimeout(onComplete, 10000)
+      setTimeout(() => setStage(1), 300),
+      setTimeout(() => setStage(2), 800),
+      setTimeout(() => setStage(3), 1500),
+      setTimeout(() => setStage(4), 2500),
+      setTimeout(onComplete, 4000)
     ];
 
     const progressInterval = setInterval(() => {

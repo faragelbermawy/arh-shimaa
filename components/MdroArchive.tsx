@@ -174,7 +174,8 @@ const MdroArchive: React.FC = () => {
     handleDownloadReport(report);
     
     if (platform === 'whatsapp') {
-      const text = `*MDRO ALERT - ARH-LTC*\n\nOrganism: ${report.mdroTransmission}\nUnit: ${report.unitName}\n\nPDF report downloaded to terminal. Please attach it to this message manually.`;
+      const appUrl = 'https://arh-ltc-mdro-hub-314466822792.us-west1.run.app/';
+      const text = `*MDRO ALERT - ARH-LTC*\n\nOrganism: ${report.mdroTransmission}\nUnit: ${report.unitName}\n\nPDF report downloaded to terminal. Please attach it to this message manually.\n\nPortal: ${appUrl}`;
       const waUrl = `https://wa.me/${managerPhone}?text=${encodeURIComponent(text)}`;
       window.open(waUrl, '_blank');
     } else {

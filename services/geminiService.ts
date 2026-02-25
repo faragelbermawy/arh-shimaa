@@ -73,6 +73,8 @@ export class GeminiService {
             isMdroFinding: { type: Type.BOOLEAN },
             auditType: { type: Type.STRING },
             staffGroup: { type: Type.STRING },
+            auditor: { type: Type.STRING },
+            audienceName: { type: Type.STRING },
             checkedItems: { type: Type.ARRAY, items: { type: Type.STRING } }
           },
           required: ["handHygiene", "ppe", "environmental", "equipment", "summary", "unitName", "mdroTransmission", "reportDate", "isMdroFinding"]

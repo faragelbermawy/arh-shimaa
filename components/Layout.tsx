@@ -203,7 +203,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <div className="flex items-center gap-1 md:gap-3">
           <button 
             onClick={() => {
-              const appUrl = 'https://arh-ltc-mdro-hub-314466822792.us-west1.run.app';
+              const appUrl = window.location.origin;
               if (navigator.share) {
                 navigator.share({
                   title: 'ARH-LTC MDRO Hub',
@@ -309,7 +309,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-1">DESIGNED BY FARAG ELBERMAWY LTC</p>
           <p className="text-[8px] font-bold uppercase tracking-widest mb-4">ARH-LTC Clinical Intelligence Hub</p>
           <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-            Version: 1.0.5 — Build: 2026-02-23
+            Version: 1.0.6 — Build: 2026-02-25
           </div>
         </footer>
       </main>

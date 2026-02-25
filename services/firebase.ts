@@ -12,6 +12,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
 
+export const sendData = (path: string, data: any) => push(ref(db, path), { ...data, date: new Date().toISOString() });
+
 // دالة موحدة لكل الأزرار
 export const sendToCloud = async (folderName: string, data: any) => {
   try {

@@ -109,7 +109,8 @@ const SyncHub: React.FC = () => {
       alert("Key is too long for a direct WhatsApp link. It has been copied to your clipboard. Please paste it manually in the chat.");
       return;
     }
-    const text = `*MDRO HUB SYNC (${selectedMode.toUpperCase()})*\n\nPaste this clinical key:\n\n${syncToken}`;
+    const appUrl = 'https://arh-ltc-mdro-hub-314466822792.us-west1.run.app/';
+    const text = `*MDRO HUB SYNC (${selectedMode.toUpperCase()})*\n\nPaste this clinical key:\n\n${syncToken}\n\nPortal: ${appUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 

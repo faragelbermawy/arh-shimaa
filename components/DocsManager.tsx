@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   Trash2, 
   Search,
@@ -31,18 +31,25 @@ import {
   Plus,
   Eye,
   MessageSquare,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Download,
+  Building2,
+  ShieldCheck,
+  Camera,
+  FileUp as FileUpIcon,
+  CheckCircle
 } from 'lucide-react';
-import { gemini } from '../services/geminiService';
-import { storageService } from '../services/storageService';
 import { db, sendToCloud } from '../services/firebase';
 import { ref, onValue } from "firebase/database";
-import { ClinicalReport, AuditType, UserProgress } from '../types';
+import { AuditType, ClinicalReport } from '../types';
+import { gemini } from '../services/geminiService';
+import { storageService } from '../services/storageService';
 import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const DESIGNER_PHONE = "966508855131";
 
-type CategoryKey = AuditType | 'mdro-finding' | 'uncategorized';
+type CategoryKey = AuditType | 'mdro-finding' | 'registries' | 'uncategorized';
 
 interface CategoryInfo {
   id: CategoryKey;
@@ -62,582 +69,695 @@ const CATEGORIES: CategoryInfo[] = [
   { id: 'equipment', label: 'Equipment Care', icon: Stethoscope, color: 'text-indigo-600', bgGradient: 'from-indigo-50 to-white dark:from-indigo-950/40 dark:to-slate-900', accentBorder: 'border-indigo-100 dark:border-indigo-900/30', shadowColor: 'shadow-indigo-900/10' },
   { id: 'isolation', label: 'Isolation Logs', icon: ShieldAlert, color: 'text-rose-600', bgGradient: 'from-rose-50 to-white dark:from-rose-950/40 dark:to-slate-900', accentBorder: 'border-rose-100 dark:border-rose-900/30', shadowColor: 'shadow-rose-900/10' },
   { id: 'visitors', label: 'Visitor Audits', icon: Users, color: 'text-purple-600', bgGradient: 'from-purple-50 to-white dark:from-purple-950/40 dark:to-slate-900', accentBorder: 'border-purple-100 dark:border-purple-900/30', shadowColor: 'shadow-purple-900/10' },
+  { id: 'registries', label: 'Visitor Registry', icon: UserCheck, color: 'text-teal-600', bgGradient: 'from-teal-50 to-white dark:from-teal-950/40 dark:to-slate-900', accentBorder: 'border-teal-100 dark:border-teal-900/30', shadowColor: 'shadow-teal-900/10' },
   { id: 'uncategorized', label: 'General / Other', icon: Folder, color: 'text-slate-600', bgGradient: 'from-slate-50 to-white dark:from-slate-800 dark:to-slate-900', accentBorder: 'border-slate-100 dark:border-white/10', shadowColor: 'shadow-slate-900/10' },
 ];
 
 const DocsManager: React.FC = () => {
   const navigate = useNavigate();
-  const [reports, setReports] = useState<ClinicalReport[]>(storageService.getReports());
-  const [cloudAudits, setCloudAudits] = useState<any[]>([]);
-  const [cloudRegistries, setCloudRegistries] = useState<any[]>([]);
-  const [cloudFindings, setCloudFindings] = useState<any[]>([]);
-  const [cloudReports, setCloudReports] = useState<any[]>([]);
-  const [progress, setProgress] = useState<UserProgress>(storageService.getProgress());
-  const [isProcessing, setIsProcessing] = useState(false);
+  const location = useLocation();
+  const [allReports, setAllReports] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedCategory, setSelectedCategory] = useState<CategoryKey | null>(null);
   const [filter, setFilter] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<CategoryKey | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
+  const [toast, setToast] = useState<{ message: string; show: boolean }>({ message: '', show: false });
+  const [selectedReport, setSelectedReport] = useState<any | null>(null);
+  const [viewingOriginal, setViewingOriginal] = useState(false);
+  const [reportWithData, setReportWithData] = useState<any | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  // Read type from URL
+  useEffect(() => {
+    const queryParams = new URLSearchParams(location.search);
+    const typeFilter = queryParams.get('type');
+    if (typeFilter && CATEGORIES.some(cat => cat.id === typeFilter)) {
+      setSelectedCategory(typeFilter as CategoryKey);
+    } else {
+      setSelectedCategory(null);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains('dark'));
-    setIsAdmin(sessionStorage.getItem('is_admin_active') === 'true');
-    const interval = setInterval(() => {
-      setReports(storageService.getReports());
-      setProgress(storageService.getProgress());
-      setIsAdmin(sessionStorage.getItem('is_admin_active') === 'true');
-    }, 2000);
-    return () => clearInterval(interval);
+    
+    const paths = ['audits', 'reports', 'findings', 'registries'];
+    const unsubscribes: (() => void)[] = [];
+    const aggregatedData: Record<string, any[]> = {};
+
+    paths.forEach(path => {
+      const dataRef = ref(db, path);
+      const unsubscribe = onValue(dataRef, (snapshot) => {
+        const data = snapshot.val();
+        const pathData: any[] = [];
+        
+        if (data) {
+          Object.keys(data).forEach(key => {
+            const entry = data[key];
+            if (entry.auditType || entry.timestamp || entry.id) {
+              pathData.push({ id: key, ...entry, sourcePath: path });
+            } else if (typeof entry === 'object') {
+              Object.keys(entry).forEach(subKey => {
+                pathData.push({ id: subKey, ...entry[subKey], auditType: key, sourcePath: path });
+              });
+            }
+          });
+        }
+        
+        aggregatedData[path] = pathData;
+        const allCombined = Object.values(aggregatedData).flat();
+        setAllReports(allCombined);
+        setLoading(false);
+      });
+      unsubscribes.push(unsubscribe);
+    });
+
+    return () => unsubscribes.forEach(unsub => unsub());
   }, []);
 
-  useEffect(() => {
-    // Connect to Firebase audits path for live updates
-    const auditsRef = ref(db, 'audits');
-    const unsubscribeAudits = onValue(auditsRef, (snapshot) => {
-      const val = snapshot.val();
-      if (val) {
-        const list = Object.keys(val).map(key => ({ 
-          id: `cloud-audit-${key}`, 
-          ...val[key],
-          isCloudRecord: true,
-          auditType: val[key].auditType || 'hand-hygiene' // fallback
-        }));
-        setCloudAudits(list);
-      }
-    });
+  const showToast = (message: string) => {
+    setToast({ message, show: true });
+    setTimeout(() => setToast({ message: '', show: false }), 3000);
+  };
 
-    // Connect to Firebase registries path for live updates
-    const registriesRef = ref(db, 'registries');
-    const unsubscribeRegistries = onValue(registriesRef, (snapshot) => {
-      const val = snapshot.val();
-      if (val) {
-        const list = Object.keys(val).map(key => ({ 
-          id: `cloud-reg-${key}`, 
-          title: `Registry: ${val[key].name || val[key].fullName || 'Visitor'}`,
-          unitName: val[key].department || val[key].unit || 'General',
-          timestamp: val[key].timestamp || val[key].serverTime || new Date().toISOString(),
-          isCloudRecord: true,
-          auditType: 'visitors' as AuditType,
-          summary: `Visitor/Staff presence logged: ${val[key].name || val[key].fullName}`,
-          extractedScores: { handHygiene: 0, ppe: 0, environmental: 0, equipment: 0 }
-        }));
-        setCloudRegistries(list);
-      }
-    });
-
-    // Connect to Firebase findings path for live updates
-    const findingsRef = ref(db, 'findings');
-    const unsubscribeFindings = onValue(findingsRef, (snapshot) => {
-      const val = snapshot.val();
-      if (val) {
-        const list = Object.keys(val).map(key => ({ 
-          id: `cloud-find-${key}`, 
-          ...val[key],
-          isCloudRecord: true,
-          auditType: 'mdro-finding' as any
-        }));
-        setCloudFindings(list);
-      }
-    });
-
-    // Connect to Firebase reports path for live updates
-    const reportsRef = ref(db, 'reports');
-    const unsubscribeReports = onValue(reportsRef, (snapshot) => {
-      const val = snapshot.val();
-      if (val) {
-        const list = Object.keys(val).map(key => ({ 
-          id: `cloud-rep-${key}`, 
-          ...val[key],
-          isCloudRecord: true
-        }));
-        setCloudReports(list);
-      }
-    });
-
-    return () => {
-      unsubscribeAudits();
-      unsubscribeRegistries();
-      unsubscribeFindings();
-      unsubscribeReports();
-    };
-  }, []);
-
-  const allReports = [...reports, ...cloudAudits, ...cloudRegistries, ...cloudFindings, ...cloudReports];
-
-  const openInExternalReader = async (file: ClinicalReport) => {
-    const fullReport = await storageService.getReportWithData(file.id);
-    if (!fullReport || !fullReport.fileData) {
-      alert("This record was generated from an audit and does not have an attached source document.");
-      return;
-    }
-
+  const handleOpenReport = async (report: any) => {
+    setIsProcessing(true);
     try {
-      const arr = fullReport.fileData.split(',');
-      const bstr = atob(arr[1]);
-      let n = bstr.length;
-      const u8arr = new Uint8Array(n);
-      while (n--) {
-        u8arr[n] = bstr.charCodeAt(n);
+      const fullData = await storageService.getReportWithData(report.id);
+      if (fullData) {
+        setReportWithData(fullData);
+        setSelectedReport(report);
+      } else {
+        // If not in local storage, it might be a cloud-only record or just metadata
+        setSelectedReport(report);
+        setReportWithData(report);
       }
-      const blob = new Blob([u8arr], { type: fullReport.fileMimeType || 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      
-      const newWindow = window.open(url, '_blank');
-      if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-        const link = document.createElement('a');
-        link.href = url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    } catch (err) {
+      console.error("Failed to load report data", err);
+      setSelectedReport(report);
+    }
+    setIsProcessing(false);
+  };
+
+  const handleDeleteReport = async (id: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    if (window.confirm("CRITICAL: Purge this clinical record from vault?")) {
+      await storageService.deleteReport(id);
+      setAllReports(prev => prev.filter(r => r.id !== id));
+      if (selectedReport?.id === id) {
+        setSelectedReport(null);
+        setReportWithData(null);
       }
-      setTimeout(() => URL.revokeObjectURL(url), 15000);
-    } catch (e) {
-      alert("Error opening source file.");
+      showToast("Record Purged");
     }
   };
 
-  const createPDFBlob = async (report: ClinicalReport): Promise<{ blob: Blob, filename: string }> => {
-    const fullReport = await storageService.getReportWithData(report.id);
-    const r = fullReport || report;
-    
+  const handleDownloadReport = async (report: any) => {
     const doc = new jsPDF();
-    const isAudit = !r.isMdroFinding;
+    const isAudit = !report.isMdroFinding;
+    const dataToUse = reportWithData?.id === report.id ? reportWithData : report;
     
-    // Header
-    doc.setFillColor(isAudit ? 22 : 185, isAudit ? 101 : 28, isAudit ? 52 : 28); 
-    doc.rect(0, 0, 210, 40, 'F');
+    const auditTypeLabel = report.auditType?.replace('-', ' ').toUpperCase() || 'CLINICAL';
+    const reportTitle = isAudit ? `${auditTypeLabel} AUDIT: ${report.unitName || report.department || 'N/A'}` : `MDRO FINDING: ${report.mdroTransmission}`;
+
+    // Header Section
+    doc.setFillColor(21, 128, 61); // Emerald 700
+    doc.rect(0, 0, 210, 45, 'F');
+    
     doc.setTextColor(255, 255, 255);
-    doc.setFontSize(22);
+    doc.setFontSize(24);
     doc.setFont('helvetica', 'bold');
-    doc.text('ARH-LTC', 20, 20);
+    doc.text("ARH-LTC", 20, 20);
+    
     doc.setFontSize(10);
-    doc.text(isAudit ? 'OFFICIAL CLINICAL AUDIT REPORT' : 'MDRO FINDING REPORT', 20, 30);
+    doc.setFont('helvetica', 'normal');
+    doc.text("OFFICIAL CLINICAL AUDIT REPORT", 20, 30);
 
-    // Body
-    doc.setTextColor(50, 50, 50);
+    // Main Title
+    doc.setTextColor(30, 41, 59); // Slate 800
     doc.setFontSize(16);
-    doc.text(r.title.toUpperCase(), 20, 55);
-    
+    doc.setFont('helvetica', 'bold');
+    doc.text(reportTitle, 20, 60);
+
+    // Basic Info
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Report Date: ${r.reportDate || 'N/A'}`, 20, 65);
-    doc.text(`Unit/Ward: ${r.unitName || 'Unspecified'}`, 20, 72);
-    
-    let y = 85;
+    doc.text(`Report Date: ${report.reportDate || report.timestamp?.split(',')[0] || 'N/A'}`, 20, 70);
+    doc.text(`Unit/Ward: ${report.unitName || report.department || 'N/A'}`, 20, 77);
 
-    // Personnel Info
-    if (r.auditor || r.audienceName || r.staffGroup) {
-      doc.setFont('helvetica', 'bold');
-      doc.text('IDENTIFICATION & PERSONNEL:', 20, y);
-      y += 8;
-      doc.setFont('helvetica', 'normal');
-      if (r.auditor) { doc.text(`Clinical Auditor: ${r.auditor}`, 25, y); y += 6; }
-      if (r.audienceName) { doc.text(`Personnel Audited: ${r.audienceName}`, 25, y); y += 6; }
-      if (r.staffGroup) { doc.text(`Staff Group: ${r.staffGroup}`, 25, y); y += 6; }
-      y += 10;
-    }
-
-    // Results
-    if (isAudit) {
-      doc.setFont('helvetica', 'bold');
-      const score = Math.max(r.extractedScores.handHygiene, r.extractedScores.ppe, r.extractedScores.environmental, r.extractedScores.equipment);
-      doc.text(`TOTAL COMPLIANCE SCORE: ${score}%`, 20, y);
-      y += 15;
-      
-      if (r.checkedItems && r.checkedItems.length > 0) {
-        doc.text('COMPLIANT PROTOCOLS VERIFIED:', 20, y);
-        y += 8;
-        doc.setFont('helvetica', 'normal');
-        r.checkedItems.forEach(item => {
-          doc.text(`• ${item}`, 25, y);
-          y += 6;
-        });
-      }
-    } else {
-      doc.setFont('helvetica', 'bold');
-      doc.text(`ORGANISM DETECTED: ${r.mdroTransmission}`, 20, y);
-      y += 15;
-    }
-
-    y += 10;
+    // Identification & Personnel Section
     doc.setFont('helvetica', 'bold');
-    doc.text('AI CLINICAL SUMMARY / NOTES:', 20, y);
-    y += 8;
+    doc.text("IDENTIFICATION & PERSONNEL:", 20, 90);
     doc.setFont('helvetica', 'normal');
-    const splitSummary = doc.splitTextToSize(r.summary, 170);
-    doc.text(splitSummary, 20, y);
-    y += (splitSummary.length * 6) + 10;
+    doc.text(`Clinical Auditor: ${report.auditor || 'N/A'}`, 25, 97);
+    doc.text(`Personnel Audited: ${report.audienceName || 'No name'}`, 25, 104);
+    doc.text(`Staff Group: ${report.staffGroup || 'N/A'}`, 25, 111);
 
-    // Embed Image if exists
-    if (r.fileData && r.fileMimeType?.startsWith('image/') && r.fileData !== "__STORED_IN_IDB__") {
+    // Score Section
+    const score = report.totalScore || report.score || 0;
+    doc.setFont('helvetica', 'bold');
+    doc.text(`TOTAL COMPLIANCE SCORE: ${score}%`, 20, 125);
+
+    // Protocols Section
+    if (report.checkedItems && report.checkedItems.length > 0) {
+      doc.text("COMPLIANT PROTOCOLS VERIFIED:", 20, 135);
+      doc.setFont('helvetica', 'normal');
+      let yPos = 142;
+      report.checkedItems.forEach((item: string) => {
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.text(`• ${item}`, 25, yPos);
+        yPos += 7;
+      });
+    }
+
+    // AI Summary Section
+    let summaryY = (report.checkedItems?.length || 0) * 7 + 150;
+    if (summaryY > 260) {
+      doc.addPage();
+      summaryY = 20;
+    }
+    doc.setFont('helvetica', 'bold');
+    doc.text("AI CLINICAL SUMMARY / NOTES:", 20, summaryY);
+    doc.setFont('helvetica', 'normal');
+    const splitSummary = doc.splitTextToSize(report.summary || "No clinical summary available.", 170);
+    doc.text(splitSummary, 20, summaryY + 7);
+
+    // Original Image Page
+    if (dataToUse.fileData && dataToUse.fileData !== "__STORED_IN_IDB__") {
       try {
-        if (y > 220) { doc.addPage(); y = 20; }
-        doc.setFont('helvetica', 'bold');
-        doc.text('SOURCE IMAGE ATTACHMENT:', 20, y);
-        y += 10;
-        doc.addImage(r.fileData, 'JPEG', 20, y, 170, 0); 
+        doc.addPage();
+        doc.setFillColor(21, 128, 61);
+        doc.rect(0, 0, 210, 20, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(10);
+        doc.text("ORIGINAL CLINICAL EVIDENCE ATTACHMENT", 105, 12, { align: 'center' });
+        
+        doc.addImage(dataToUse.fileData, 'JPEG', 10, 30, 190, 0);
       } catch (e) {
-        console.error("Image embedding failed", e);
+        console.error("Could not add image to PDF", e);
       }
     }
 
-    const filename = `${r.isMdroFinding ? 'MDRO' : 'Audit'}_${r.unitName?.replace(/\s+/g, '_')}_${r.id}.pdf`;
-    return { blob: doc.output('blob'), filename };
+    // Footer on all pages would be complex with jsPDF, so just on last
+    const pageCount = (doc as any).internal.getNumberOfPages();
+    for(let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text("This is an electronically generated clinical document from ARH-LTC MDRO Hub.", 105, 285, { align: 'center' });
+    }
+
+    const safeTitle = reportTitle.replace(/[:/\\?%*|"<>]/g, '').replace(/\s+/g, '_');
+    doc.save(`${safeTitle}_${Date.now()}.pdf`);
+    showToast("Report Downloaded");
   };
 
-  const handleDownloadReport = async (report: ClinicalReport) => {
-    const { blob, filename } = await createPDFBlob(report);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const shareReport = async (e: React.MouseEvent, report: ClinicalReport, platform: 'general' | 'whatsapp' = 'general') => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const { blob, filename } = await createPDFBlob(report);
-    const file = new File([blob], filename, { type: 'application/pdf' });
-    const managerPhone = progress.managerPhone || DESIGNER_PHONE;
-
-    // System share picker is the most reliable way to send an actual PDF file to WhatsApp
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+  const handleShareReport = async (report: any, platform: 'whatsapp' | 'system') => {
+    const isAudit = !report.isMdroFinding;
+    const score = report.totalScore || report.score || 0;
+    const appUrl = 'https://arh-ltc-mdro-hub-314466822792.us-west1.run.app/';
+    
+    const text = `*ARH-LTC MDRO HUB REPORT*\n\nUnit: ${report.unitName || report.department}\nType: ${isAudit ? 'Audit' : 'MDRO Finding'}\nResult: ${isAudit ? score + '%' : report.mdroTransmission}\nDate: ${report.timestamp}\n\nPortal: ${appUrl}`;
+    
+    if (platform === 'whatsapp') {
+      const waUrl = `https://wa.me/${DESIGNER_PHONE}?text=${encodeURIComponent(text)}`;
+      window.open(waUrl, '_blank');
+    } else if (navigator.share) {
       try {
         await navigator.share({
-          files: [file],
-          title: report.title,
-          text: `Official Clinical Report for ${report.unitName}.`
+          title: 'ARH-LTC Report',
+          text: text,
+          url: appUrl
         });
-        return;
       } catch (err) {
         console.error("Share failed", err);
       }
-    }
-
-    // Fallback: Just trigger download so they have the file, then open WhatsApp
-    handleDownloadReport(report);
-    
-    if (platform === 'whatsapp') {
-      const isAudit = !report.isMdroFinding;
-      const score = Math.max(report.extractedScores.handHygiene, report.extractedScores.ppe, report.extractedScores.environmental, report.extractedScores.equipment);
-      const text = `*ARH-LTC MDRO HUB REPORT EXPORT*\n\nUnit: ${report.unitName}\nResult: ${isAudit ? score + '%' : report.mdroTransmission}\n\nPDF downloaded to terminal. Please attach it to this chat.`;
-      const waUrl = `https://wa.me/${managerPhone}?text=${encodeURIComponent(text)}`;
-      window.open(waUrl, '_blank');
-    } else {
-      alert("Report PDF downloaded. Use your system to share the file manually.");
     }
   };
 
   const processFile = async (file: File) => {
     if (!file) return;
     setIsProcessing(true);
-    setProcessingProgress(20);
+    setProcessingProgress(10);
+
     try {
       const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = async () => {
-        setProcessingProgress(50);
-        const fileData = reader.result as string;
-        const result = await gemini.analyzeReport(fileData.split(',')[1], file.type);
+      reader.onload = async (e) => {
+        const base64 = (e.target?.result as string).split(',')[1];
+        setProcessingProgress(30);
         
-        const newReport: ClinicalReport = {
-          id: `ai-${Date.now()}`,
-          title: result.isMdroFinding ? `MDRO FINDING: ${result.mdroTransmission}` : `AUDIT: ${result.unitName}`,
-          unitName: result.unitName,
-          reportDate: result.reportDate,
-          mdroTransmission: result.mdroTransmission,
-          timestamp: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-          analysisDate: new Date().toISOString(),
-          extractedScores: {
-            handHygiene: result.handHygiene || 0,
-            ppe: result.ppe || 0,
-            environmental: result.environmental || 0,
-            equipment: result.equipment || 0
-          },
-          summary: result.summary,
-          status: 'analyzed',
-          isMdroFinding: result.isMdroFinding,
-          auditType: result.auditType as AuditType,
-          checkedItems: result.checkedItems,
-          staffGroup: result.staffGroup,
-          fileData: fileData,
-          fileMimeType: file.type
-        };
-        await storageService.saveReport(newReport);
-        
-        // Sync to Firebase
-        await sendToCloud('reports', newReport);
+        try {
+          const analysis = await gemini.analyzeReport(base64, file.type);
+          setProcessingProgress(70);
+          
+          const newReport: ClinicalReport = {
+            id: `rep_${Date.now()}`,
+            title: analysis.isMdroFinding ? `MDRO Alert: ${analysis.mdroTransmission}` : `Audit: ${analysis.unitName}`,
+            unitName: analysis.unitName,
+            timestamp: new Date().toLocaleString(),
+            analysisDate: new Date().toISOString(),
+            summary: analysis.summary,
+            isMdroFinding: analysis.isMdroFinding,
+            mdroTransmission: analysis.mdroTransmission,
+            auditType: selectedCategory || analysis.auditType || 'uncategorized',
+            status: 'analyzed',
+            fileData: `data:${file.type};base64,${base64}`,
+            fileMimeType: file.type,
+            extractedScores: {
+              handHygiene: analysis.handHygiene,
+              ppe: analysis.ppe,
+              environmental: analysis.environmental,
+              equipment: analysis.equipment
+            },
+            totalScore: Math.round((analysis.handHygiene + analysis.ppe + analysis.environmental + analysis.equipment) / 4),
+            auditor: analysis.auditor,
+            audienceName: analysis.audienceName,
+            staffGroup: analysis.staffGroup,
+            checkedItems: analysis.checkedItems
+          };
 
-        setProcessingProgress(100);
-        setTimeout(() => setIsProcessing(false), 500);
+          // Save locally
+          await storageService.saveReport(newReport);
+          
+          // Sync to cloud
+          const cloudPath = newReport.isMdroFinding ? 'findings' : 'audits';
+          await sendToCloud(cloudPath, newReport);
+          
+          setProcessingProgress(100);
+          showToast("Report Analyzed & Saved");
+          setTimeout(() => setIsProcessing(false), 1000);
+        } catch (err) {
+          console.error("Analysis failed", err);
+          alert("Clinical analysis failed. Please ensure the document is legible.");
+          setIsProcessing(false);
+        }
       };
-    } catch (e) {
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("File reading failed", err);
       setIsProcessing(false);
-      alert("Analysis Failed");
     }
   };
 
-  const handleDeleteReport = async (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (window.confirm("CRITICAL: Purge this specific clinical record?")) {
-      await storageService.deleteReport(id);
-      setReports(storageService.getReports());
-    }
+  const filteredReports = allReports.filter(r => {
+    const matchesCategory = selectedCategory 
+      ? (r.auditType === selectedCategory || r.sourcePath === selectedCategory)
+      : true;
+    
+    const searchStr = filter.toLowerCase();
+    const matchesSearch = !filter || 
+      (r.unitName?.toLowerCase().includes(searchStr)) || 
+      (r.department?.toLowerCase().includes(searchStr)) ||
+      (r.mdroTransmission?.toLowerCase().includes(searchStr));
+
+    return matchesCategory && matchesSearch;
+  }).sort((a, b) => {
+    const dateA = new Date(a.timestamp || 0).getTime();
+    const dateB = new Date(b.timestamp || 0).getTime();
+    return dateB - dateA;
+  });
+
+  const getCategoryCount = (catId: CategoryKey) => {
+    return allReports.filter(r => r.auditType === catId || r.sourcePath === catId).length;
   };
 
-  const purgeVault = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (window.confirm("CRITICAL ACTION: Purge ALL documents in clinical vault? This cannot be undone.")) {
-      await storageService.clearAllData();
-      setReports([]);
-    }
-  };
-
-  const filteredReports = allReports.filter(r => 
-    (r.title?.toLowerCase() || '').includes(filter.toLowerCase()) || 
-    (r.unitName?.toLowerCase() || '').includes(filter.toLowerCase())
+  if (loading) return (
+    <div className="h-screen bg-slate-950 flex flex-col items-center justify-center text-white font-bold gap-4">
+      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      <p className="uppercase tracking-widest text-[10px]">Accessing Secure Vault...</p>
+    </div>
   );
 
-  const getReportsByCategory = (catId: CategoryKey) => {
-    if (catId === 'mdro-finding') return filteredReports.filter(r => r.isMdroFinding);
-    if (catId === 'uncategorized') return filteredReports.filter(r => !r.isMdroFinding && !r.auditType);
-    return filteredReports.filter(r => !r.isMdroFinding && r.auditType === catId);
-  };
-
-  const activeReports = selectedCategory 
-    ? getReportsByCategory(selectedCategory)
-    : [];
-
   return (
-    <div className="space-y-10 pb-20 animate-in fade-in duration-500">
-      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 pb-10 border-b border-slate-100 dark:border-slate-800">
-        <div>
-           <div className="flex items-center gap-3 mb-2">
-              <button 
-                onClick={() => selectedCategory ? setSelectedCategory(null) : navigate(-1)} 
-                className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-900 text-slate-500 transition-all hover:bg-blue-600 hover:text-white"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <span className="text-blue-600 font-black text-[10px] uppercase tracking-[0.4em]">
-                {selectedCategory 
-                  ? `Clinical Vault > ${CATEGORIES.find(c => c.id === selectedCategory)?.label}`
-                  : 'Intelligence Repository'}
-              </span>
-           </div>
-           <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter">
-             {selectedCategory ? CATEGORIES.find(c => c.id === selectedCategory)?.label : 'Clinical Vault'}
-           </h2>
-        </div>
-        
-        <div className="flex flex-wrap gap-4 items-center">
-           {isAdmin && reports.length > 0 && (
-             <button type="button" onClick={purgeVault} className="bg-red-600/10 text-red-600 border border-red-600/20 px-6 py-4 rounded-[2rem] font-black text-[10px] uppercase tracking-widest flex items-center gap-3 active:scale-95 transition-all">
-                <Trash2 className="w-5 h-5" /> Purge Vault
-             </button>
-           )}
-           <button type="button" onClick={() => fileInputRef.current?.click()} className="bg-emerald-600 text-white px-8 py-4 rounded-[2rem] font-black text-[10px] uppercase tracking-widest flex items-center gap-3 active:scale-95 transition-all shadow-xl shadow-emerald-900/20">
-             <FileUp className="w-5 h-5" /> Upload Report
-           </button>
-           <input ref={fileInputRef} type="file" accept="image/*,application/pdf" onChange={e => processFile(e.target.files?.[0]!)} className="hidden" />
-           <div className="relative">
-              <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Global search..." className={`pl-14 pr-8 py-4 rounded-[2rem] border-none outline-none text-sm font-bold w-full md:w-64 ${isDarkMode ? 'bg-slate-900 ring-1 ring-white/5' : 'bg-slate-100'}`} />
-           </div>
-        </div>
-      </header>
-
-      {isProcessing && (
-        <div className="p-20 text-center border-4 border-dashed rounded-[4rem] bg-blue-50/30 dark:bg-blue-900/10 animate-pulse flex flex-col items-center gap-6">
-           <RefreshCw className="w-12 h-12 text-blue-600 animate-spin" />
-           <h4 className="text-3xl font-black uppercase text-blue-900 dark:text-blue-400">AI Extraction Active</h4>
-           <div className="w-64 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-blue-600" style={{ width: `${processingProgress}%` }} /></div>
+    <div className="min-h-screen bg-slate-950 p-6 md:p-10 animate-in fade-in duration-500 pb-24">
+      
+      {/* Toast */}
+      {toast.show && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[600] animate-in slide-in-from-top-4">
+          <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-white/5">
+            <CheckCircle className="w-5 h-5 text-emerald-400" />
+            <span className="text-[10px] font-black uppercase tracking-widest">{toast.message}</span>
+          </div>
         </div>
       )}
 
+      {/* Processing Overlay */}
+      {isProcessing && (
+        <div className="fixed inset-0 z-[1000] bg-slate-950/90 backdrop-blur-xl flex flex-col items-center justify-center p-10 text-center">
+          <div className="bg-blue-600/20 p-10 rounded-[4rem] border border-blue-500/30 flex flex-col items-center gap-8 animate-pulse">
+            <div className="bg-white p-6 rounded-full shadow-2xl">
+              <RefreshCw className="w-12 h-12 text-blue-600 animate-spin" />
+            </div>
+            <div className="space-y-2">
+              <h4 className="text-3xl font-black uppercase tracking-tighter text-white">Analyzing Intelligence...</h4>
+              <p className="text-blue-400 text-[10px] font-bold uppercase tracking-widest">Gemini Clinical Engine Active</p>
+            </div>
+            <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500 transition-all duration-500" 
+                style={{ width: `${processingProgress}%` }} 
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 mb-12 border-b border-white/5 pb-10">
+        <div className="flex items-center gap-6">
+          {selectedCategory ? (
+            <button 
+              onClick={() => navigate('/docs')} 
+              className="p-4 bg-slate-900 hover:bg-slate-800 rounded-2xl text-white transition-all active:scale-95 shadow-xl border border-white/5"
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+          ) : (
+            <div className="bg-blue-600 p-5 rounded-[2rem] shadow-2xl shadow-blue-900/30">
+              <Database className="w-10 h-10 text-white" />
+            </div>
+          )}
+          <div>
+            <h2 className="text-3xl md:text-5xl font-black text-white uppercase tracking-tighter leading-none">
+              {selectedCategory ? CATEGORIES.find(c => c.id === selectedCategory)?.label : 'Clinical Vault'}
+            </h2>
+            <p className="text-slate-400 font-bold text-xs md:text-sm mt-2 tracking-widest uppercase">
+              {selectedCategory ? 'Category Archives' : 'Enterprise Intelligence Repository'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto">
+          {selectedCategory && (
+            <div className="flex gap-3 w-full sm:w-auto">
+              <button 
+                onClick={() => fileInputRef.current?.click()} 
+                className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-500 text-white px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all"
+              >
+                <FileUpIcon className="w-4 h-4" /> Upload
+              </button>
+              <button 
+                onClick={() => cameraInputRef.current?.click()} 
+                className="flex-1 sm:flex-none bg-slate-900 hover:bg-slate-800 text-white px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all border border-white/5"
+              >
+                <Camera className="w-4 h-4" /> Scan
+              </button>
+              <input ref={fileInputRef} type="file" accept="image/*,application/pdf" onChange={(e) => processFile(e.target.files?.[0]!)} className="hidden" />
+              <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={(e) => processFile(e.target.files?.[0]!)} className="hidden" />
+            </div>
+          )}
+          <div className="relative group flex-1 lg:w-96">
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+            <input 
+              value={filter} 
+              onChange={e => setFilter(e.target.value)} 
+              placeholder="Search records..." 
+              className="w-full pl-14 pr-6 py-5 bg-slate-900/50 border border-white/5 rounded-[2rem] text-sm font-bold text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-slate-600"
+            />
+          </div>
+        </div>
+      </header>
+
       {!selectedCategory ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8">
+        /* Category Grid View */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {CATEGORIES.map((cat) => {
-            const count = getReportsByCategory(cat.id).length;
-            const Icon = cat.icon;
+            const count = getCategoryCount(cat.id);
             return (
               <button
                 key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`group p-10 rounded-[4rem] border transition-all duration-500 flex flex-col text-left relative overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-2 ${count > 0 ? cat.shadowColor : ''} ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-100'}`}
+                onClick={() => navigate(`/docs?type=${cat.id}`)}
+                className={`group relative p-10 rounded-[4rem] border transition-all duration-500 text-left overflow-hidden hover:shadow-2xl hover:-translate-y-2 ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-100'}`}
               >
-                <div className={`absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.08] group-hover:scale-110 transition-all duration-700 pointer-events-none ${cat.color}`}>
-                  <Icon className="w-48 h-48" />
-                </div>
+                <div className={`absolute inset-0 bg-gradient-to-br ${cat.bgGradient} opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
                 
-                <div className={`relative w-20 h-20 rounded-[2.2rem] flex items-center justify-center mb-12 shadow-inner border-2 ${cat.accentBorder} bg-gradient-to-br ${cat.bgGradient} transition-transform group-hover:scale-110 duration-500`}>
-                   <div className={`absolute inset-0 rounded-[2rem] opacity-20 blur-xl ${cat.color} group-hover:opacity-40 transition-opacity`} />
-                   <Icon className={`w-10 h-10 ${cat.color} drop-shadow-sm relative z-10`} />
-                </div>
-                
-                <div className="space-y-1 relative z-10">
-                   <h3 className="font-black text-2xl uppercase tracking-tighter leading-none group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{cat.label}</h3>
-                   <div className="flex items-center gap-3">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{count} Records Indexed</p>
-                      {count > 0 && <div className={`w-1.5 h-1.5 rounded-full animate-pulse bg-emerald-500 shadow-glow`} />}
-                   </div>
-                </div>
-                
-                <div className="mt-10 flex items-center justify-between pt-6 border-t border-slate-50 dark:border-white/5 relative z-10">
-                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">Clinical Access</span>
-                   <ChevronRight className="w-4 h-4 text-slate-300 group-hover:translate-x-1 transition-transform" />
+                <div className="relative z-10 space-y-8">
+                  <div className={`w-20 h-20 rounded-[2.5rem] flex items-center justify-center ${cat.color} bg-slate-950/10 shadow-inner group-hover:scale-110 transition-transform duration-500`}>
+                    <cat.icon className="w-10 h-10" />
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-2xl font-black uppercase tracking-tighter text-white group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                      {cat.label}
+                    </h3>
+                    <div className="flex items-center gap-3 mt-3">
+                      <div className="px-4 py-1.5 bg-slate-950/20 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
+                        {count} Records
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-600 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                    </div>
+                  </div>
                 </div>
               </button>
             );
           })}
         </div>
       ) : (
-        <div className="space-y-8 animate-in slide-in-from-right-10 duration-500">
-           <div className="flex items-center justify-between px-2">
-              <h3 className="font-black text-slate-500 text-[12px] uppercase tracking-[0.5em] flex items-center gap-4">
-                <FileText className="w-6 h-6 opacity-40" /> {activeReports.length} Active Records
-              </h3>
-              <div className="flex gap-4">
-                 <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-2 hover:underline bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-full">
-                  <Plus className="w-4 h-4" /> Add File
-                </button>
-                <button onClick={() => setSelectedCategory(null)} className="text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-2 hover:underline bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-full">
-                  <LayoutGrid className="w-4 h-4" /> Back to Vault
-                </button>
-              </div>
-           </div>
-
-           {activeReports.length > 0 ? (
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                {activeReports.map((r) => {
-                   const hasSource = r.fileData || r.fileData === "__STORED_IN_IDB__";
-                   return (
-                  <div key={r.id} className={`p-10 rounded-[4rem] border shadow-sm hover:shadow-2xl transition-all duration-500 group ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-100'}`}>
-                    <div className="flex justify-between items-start mb-10">
-                      <div className="flex items-center gap-6">
-                        <div className={`relative w-20 h-20 rounded-[2.2rem] flex items-center justify-center shadow-xl border-4 ${r.isMdroFinding ? 'bg-red-600 border-red-500 shadow-red-900/20' : 'bg-emerald-600 border-emerald-500 shadow-emerald-900/20'}`}>
-                          {r.isMdroFinding ? <AlertTriangle className="w-10 h-10 text-white" /> : <CheckSquare className="w-10 h-10 text-white" />}
-                        </div>
-                        <div>
-                           <div className="flex items-center gap-2">
-                              <h4 className="font-black text-xl uppercase tracking-tighter truncate max-w-xs leading-tight group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{r.title}</h4>
-                              {r.isCloudRecord && (
-                                <span className="bg-blue-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest">Cloud</span>
-                              )}
-                           </div>
-                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 flex items-center gap-2">
-                             <Clock className="w-3.5 h-3.5" /> {r.timestamp}
-                           </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-3">
-                        <button type="button" onClick={(e) => handleDeleteReport(e, r.id)} title="Delete Record" className="p-4 rounded-2xl bg-red-50 dark:bg-red-950/40 text-red-600 hover:bg-red-600 hover:text-white transition-all shadow-sm"><Trash2 className="w-5 h-5" /></button>
-                      </div>
+        /* File List View */
+        <div className="space-y-6">
+          {filteredReports.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredReports.map((report) => (
+                <div 
+                  key={report.id} 
+                  onClick={() => handleOpenReport(report)}
+                  className="bg-slate-900/50 backdrop-blur-sm border border-white/5 p-8 rounded-[2.5rem] flex justify-between items-center group hover:border-blue-500/30 transition-all duration-500 shadow-xl cursor-pointer"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-blue-500" />
+                      <h4 className="text-white font-black uppercase text-sm tracking-tight truncate max-w-[180px]">
+                        {report.department || report.unitName || 'General Unit'}
+                      </h4>
                     </div>
-
-                    {!r.isMdroFinding && (r.auditor || r.audienceName) && (
-                      <div className="mb-8 grid grid-cols-2 gap-4">
-                         <div className="bg-slate-50 dark:bg-slate-950 p-5 rounded-2xl border border-slate-100 dark:border-white/5 transition-colors group-hover:bg-blue-50 dark:group-hover:bg-blue-900/10">
-                            <p className="text-[8px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1.5"><ShieldAlert className="w-3 h-3 text-blue-500" /> Clinical Auditor</p>
-                            <p className="text-xs font-black uppercase text-slate-700 dark:text-slate-300 truncate">{r.auditor || 'Sync AI Agent'}</p>
-                         </div>
-                         <div className="bg-slate-50 dark:bg-slate-950 p-5 rounded-2xl border border-slate-100 dark:border-white/5 transition-colors group-hover:bg-emerald-50 dark:group-hover:bg-emerald-900/10">
-                            <p className="text-[8px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1.5"><UserCheck className="w-3 h-3 text-emerald-500" /> Monitored Staff</p>
-                            <p className="text-xs font-black uppercase text-slate-700 dark:text-slate-300 truncate">{r.audienceName || 'General Care'}</p>
-                         </div>
-                      </div>
-                    )}
-
-                    {r.isMdroFinding ? (
-                      <div className="space-y-4 mb-10">
-                        <div className="bg-red-50 dark:bg-red-950/40 p-8 rounded-[2.5rem] border border-red-100 dark:border-red-900/30 shadow-inner">
-                           <p className="text-[9px] font-black text-red-500 uppercase tracking-[0.2em] mb-2">Organism Confirmation</p>
-                           <p className="text-3xl font-black text-red-700 dark:text-red-400 uppercase tracking-tighter leading-none">{r.mdroTransmission}</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-6 mb-10">
-                        <div className="flex items-center justify-between">
-                           <div className="flex flex-wrap gap-3">
-                             <div className="bg-emerald-50 dark:bg-emerald-950/40 px-6 py-2 rounded-full border border-emerald-100 dark:border-emerald-900/30 text-[9px] font-black text-emerald-600 uppercase flex items-center gap-2">
-                                <ClipboardCheck className="w-3 h-3" /> {r.auditType?.replace('-', ' ') || 'General Material'}
-                             </div>
-                             {r.staffGroup && (
-                               <div className="bg-blue-50 dark:bg-blue-950/40 px-6 py-2 rounded-full border border-blue-100 dark:border-blue-900/30 text-[9px] font-black text-blue-600 uppercase flex items-center gap-2">
-                                 <Users className="w-3 h-3" /> {r.staffGroup}
-                               </div>
-                             )}
-                           </div>
-                           <div className="text-3xl font-black text-emerald-600 dark:text-emerald-400">
-                              {Math.max(r.extractedScores.handHygiene, r.extractedScores.ppe, r.extractedScores.environmental, r.extractedScores.equipment)}%
-                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="p-8 rounded-[3rem] border border-blue-50 dark:border-blue-900/20 bg-blue-500/5 mb-8 shadow-inner">
-                       <p className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4" /> AI Summary / Personnel Notes</p>
-                       <p className="text-xs font-bold text-slate-500 dark:text-slate-400 leading-relaxed italic">"{r.summary}"</p>
+                    <div className="flex items-center gap-2 text-slate-500 text-[10px] font-bold uppercase">
+                      <Clock className="w-3.5 h-3.5" />
+                      {report.timestamp}
                     </div>
-
-                    <div className="flex flex-col gap-3">
-                       <div className="flex gap-3">
-                          {hasSource && (
-                            <button type="button" onClick={() => openInExternalReader(r)} className="flex-1 bg-slate-900 text-white py-6 rounded-[1.8rem] font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl shadow-slate-900/10">
-                              <Eye className="w-4 h-4" /> View Original
-                            </button>
-                          )}
-                          <button type="button" onClick={() => handleDownloadReport(r)} className="flex-1 bg-blue-600 text-white py-6 rounded-[1.8rem] font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl shadow-blue-900/10">
-                            <FileDown className="w-4 h-4" /> Get PDF
-                          </button>
-                       </div>
-                       <div className="flex gap-3">
-                          <button type="button" onClick={(e) => shareReport(e, r, 'general')} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 py-6 rounded-[1.8rem] font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all">
-                            <Share2 className="w-4 h-4" /> System Share
-                          </button>
-                          <button type="button" onClick={(e) => shareReport(e, r, 'whatsapp')} className="flex-1 bg-emerald-600 text-white py-6 rounded-[1.8rem] font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl shadow-emerald-900/20">
-                            <MessageSquare className="w-4 h-4" /> Send PDF
-                          </button>
-                       </div>
+                    <div className="flex flex-wrap items-center gap-3 mt-4">
+                      <div className="px-4 py-1.5 bg-emerald-500/10 text-emerald-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
+                        Score: {report.extractedScores?.handHygiene ?? report.totalScore ?? 0}%
+                      </div>
+                      {report.mdroTransmission && (
+                        <div className="px-4 py-1.5 bg-red-500/10 text-red-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-500/20">
+                          {report.mdroTransmission}
+                        </div>
+                      )}
                     </div>
                   </div>
-                )})}
-             </div>
-           ) : (
-             <div className="py-40 text-center flex flex-col items-center gap-8 bg-slate-50 dark:bg-slate-900/30 rounded-[5rem] border-4 border-dashed border-slate-100 dark:border-slate-800">
-                <Folder className="w-24 h-24 text-slate-200" />
-                <div className="space-y-2">
-                   <h4 className="text-3xl font-black uppercase tracking-tighter text-slate-300">Folder Empty</h4>
-                   <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">No intelligence found for this clinical category.</p>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={(e) => handleDeleteReport(report.id, e)}
+                        className="p-4 bg-red-600/20 text-red-500 rounded-2xl hover:bg-red-600 hover:text-white transition-all active:scale-90 shadow-lg"
+                        title="Delete Report"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleShareReport(report, 'whatsapp'); }}
+                        className="p-4 bg-emerald-600/20 text-emerald-500 rounded-2xl hover:bg-emerald-600 hover:text-white transition-all active:scale-90 shadow-lg"
+                        title="Share on WhatsApp"
+                      >
+                        <Share2 className="w-5 h-5" />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleDownloadReport(report); }}
+                        className="p-4 bg-slate-800 rounded-2xl text-white hover:bg-blue-600 transition-all active:scale-90 shadow-lg group-hover:shadow-blue-900/20"
+                        title="Download PDF"
+                      >
+                        <Download className="w-5 h-5" />
+                      </button>
+                    </div>
                 </div>
-                <button onClick={() => setSelectedCategory(null)} className="bg-slate-900 text-white px-10 py-5 rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-xl">Back to Vault</button>
-             </div>
-           )}
+              ))}
+            </div>
+          ) : (
+            <div className="py-40 text-center flex flex-col items-center gap-6 bg-slate-900/20 rounded-[4rem] border-2 border-dashed border-white/5">
+              <FileText className="w-16 h-16 text-slate-800" />
+              <p className="text-slate-500 font-black uppercase tracking-widest text-xs">No clinical records found in this category</p>
+              <button onClick={() => navigate('/docs')} className="mt-4 px-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest">Back to Categories</button>
+            </div>
+          )}
         </div>
       )}
-      
-      <footer className={`p-10 rounded-[4rem] border flex flex-col md:flex-row items-center gap-10 ${isDarkMode ? 'bg-blue-900/10 border-blue-500/20 shadow-blue-900/20 shadow-2xl' : 'bg-blue-50 border-blue-100 shadow-xl shadow-blue-100'}`}>
-         <div className="bg-blue-600 p-8 rounded-[2.5rem] shadow-2xl shadow-blue-900/30"><Database className="w-12 h-12 text-white" /></div>
-         <div className="space-y-3 flex-1 text-center md:text-left">
-            <h4 className="text-2xl font-black uppercase tracking-tight">Enterprise Intelligence Index</h4>
-            <p className="text-xs font-bold text-blue-800/60 dark:text-blue-400/60 leading-relaxed max-w-3xl">
-              All documents are automatically indexed using advanced AI meta-tags and observation metadata. Folders represent specific operational streams, ensuring rapid personnel tracking and trend analysis within the ARH-LTC network.
-            </p>
-         </div>
-         <div className="flex items-center gap-3 text-[10px] font-black uppercase text-blue-600 bg-white dark:bg-slate-950 px-8 py-4 rounded-full border border-blue-100 dark:border-blue-900/30 shadow-lg">
-            <ShieldAlert className="w-5 h-5 animate-pulse" /> AI INDEXING v2.5 ACTIVE
-         </div>
+
+      {/* Report Detail Modal */}
+      {selectedReport && (
+        <div className="fixed inset-0 z-[500] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4 md:p-10 animate-in fade-in duration-300">
+          <div className="bg-slate-900 border border-white/10 w-full max-w-2xl rounded-[3rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="p-8 border-b border-white/5 flex items-center justify-between bg-slate-900/50">
+              <div className="flex items-center gap-4">
+                <div className={`p-4 rounded-2xl ${selectedReport.isMdroFinding ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
+                  {selectedReport.isMdroFinding ? <AlertTriangle className="w-8 h-8" /> : <CheckCircle2 className="w-8 h-8" />}
+                </div>
+                <div>
+                  <h3 className="text-xl md:text-2xl font-black uppercase tracking-tighter text-white leading-tight">
+                    {selectedReport.title || (selectedReport.isMdroFinding ? 'MDRO Alert' : 'Audit Report')}
+                  </h3>
+                  <div className="flex items-center gap-3 mt-1">
+                    <Clock className="w-3 h-3 text-slate-500" />
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{selectedReport.timestamp}</p>
+                    {selectedReport.sourcePath === 'cloud' && (
+                      <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[8px] font-black rounded uppercase">Cloud</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <button 
+                onClick={() => { setSelectedReport(null); setViewingOriginal(false); setReportWithData(null); }}
+                className="p-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-white transition-all"
+              >
+                <Plus className="w-6 h-6 rotate-45" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-8 space-y-8">
+              
+              {viewingOriginal && reportWithData?.fileData ? (
+                <div className="rounded-3xl overflow-hidden border border-white/10 bg-black flex items-center justify-center min-h-[300px]">
+                  {reportWithData.fileMimeType?.includes('pdf') ? (
+                    <div className="p-10 text-center space-y-4">
+                      <FileText className="w-16 h-16 text-blue-500 mx-auto" />
+                      <p className="text-white font-bold uppercase text-xs">PDF Document Preview Not Available</p>
+                      <button onClick={() => handleDownloadReport(selectedReport)} className="text-blue-500 underline text-[10px] font-bold uppercase">Download to View</button>
+                    </div>
+                  ) : (
+                    <img 
+                      src={reportWithData.fileData} 
+                      alt="Original Document" 
+                      className="max-w-full h-auto"
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
+                </div>
+              ) : (
+                <>
+                  {/* Organism / Result Section */}
+                  <div className={`p-8 rounded-[2rem] border ${selectedReport.isMdroFinding ? 'bg-red-500/5 border-red-500/20' : 'bg-emerald-500/5 border-emerald-500/20'}`}>
+                    <p className={`text-[8px] font-black uppercase tracking-[0.2em] mb-3 ${selectedReport.isMdroFinding ? 'text-red-500' : 'text-emerald-500'}`}>
+                      {selectedReport.isMdroFinding ? 'Organism Confirmation' : 'Compliance Result'}
+                    </p>
+                    <h4 className={`text-2xl md:text-4xl font-black uppercase tracking-tighter ${selectedReport.isMdroFinding ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {selectedReport.isMdroFinding ? selectedReport.mdroTransmission : `${selectedReport.totalScore || selectedReport.score}% Compliance`}
+                    </h4>
+                  </div>
+
+                  {/* Summary Section */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 text-blue-500">
+                      <Sparkles className="w-4 h-4" />
+                      <p className="text-[10px] font-black uppercase tracking-widest">AI Summary / Personnel Notes</p>
+                    </div>
+                    <div className="p-6 rounded-[2rem] bg-slate-800/50 border border-white/5 italic text-slate-300 text-sm leading-relaxed">
+                      "{selectedReport.summary || 'No clinical summary available for this record.'}"
+                    </div>
+                  </div>
+
+                  {/* Scores Grid if Audit */}
+                  {!selectedReport.isMdroFinding && selectedReport.extractedScores && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {selectedReport.auditType === 'hand-hygiene' ? (
+                        <div className="p-6 rounded-2xl bg-blue-500/10 border border-blue-500/20 col-span-full">
+                          <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-2">Hand Hygiene Compliance</p>
+                          <p className="text-4xl font-black text-blue-600">{selectedReport.extractedScores.handHygiene || selectedReport.totalScore || selectedReport.score}%</p>
+                        </div>
+                      ) : selectedReport.auditType === 'ppe-compliance' ? (
+                        <div className="p-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 col-span-full">
+                          <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-2">PPE Compliance Score</p>
+                          <p className="text-4xl font-black text-emerald-600">{selectedReport.extractedScores.ppe || selectedReport.totalScore || selectedReport.score}%</p>
+                        </div>
+                      ) : selectedReport.auditType === 'environmental' ? (
+                        <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/20 col-span-full">
+                          <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-2">Environmental Score</p>
+                          <p className="text-4xl font-black text-amber-600">{selectedReport.extractedScores.environmental || selectedReport.totalScore || selectedReport.score}%</p>
+                        </div>
+                      ) : selectedReport.auditType === 'equipment' ? (
+                        <div className="p-6 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 col-span-full">
+                          <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-2">Equipment Care Score</p>
+                          <p className="text-4xl font-black text-indigo-600">{selectedReport.extractedScores.equipment || selectedReport.totalScore || selectedReport.score}%</p>
+                        </div>
+                      ) : (
+                        <div className="p-6 rounded-2xl bg-slate-800/50 border border-white/5 col-span-full">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Compliance Score</p>
+                          <p className="text-4xl font-black text-white">{selectedReport.totalScore || selectedReport.score}%</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="p-8 border-t border-white/5 bg-slate-900/80 backdrop-blur-sm grid grid-cols-2 md:grid-cols-3 gap-4">
+              <button 
+                onClick={() => setViewingOriginal(!viewingOriginal)}
+                disabled={!reportWithData?.fileData}
+                className={`flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 ${viewingOriginal ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-50'}`}
+              >
+                <Eye className="w-4 h-4" /> {viewingOriginal ? 'Show Details' : 'View Original'}
+              </button>
+              <button 
+                onClick={() => handleDownloadReport(selectedReport)}
+                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-all active:scale-95"
+              >
+                <Download className="w-4 h-4" /> Get PDF
+              </button>
+              <button 
+                onClick={() => handleShareReport(selectedReport, 'system')}
+                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-white text-slate-900 font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all active:scale-95"
+              >
+                <Share2 className="w-4 h-4" /> System Share
+              </button>
+              <button 
+                onClick={() => handleShareReport(selectedReport, 'whatsapp')}
+                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-emerald-500 transition-all active:scale-95"
+              >
+                <MessageSquare className="w-4 h-4" /> Send PDF
+              </button>
+              <button 
+                onClick={() => handleDeleteReport(selectedReport.id)}
+                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-red-600/20 text-red-500 font-black text-[10px] uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all active:scale-95"
+              >
+                <Trash2 className="w-4 h-4" /> Purge Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Footer Status */}
+      <footer className="mt-20 p-8 rounded-[3rem] bg-blue-900/10 border border-blue-500/20 flex flex-col md:flex-row items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <ShieldCheck className="w-6 h-6 text-blue-500" />
+          <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+            Clinical Intelligence Node v2.5 - Secure Transmission Active
+          </p>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="text-center">
+            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Total Intelligence</p>
+            <p className="text-xl font-black text-white">{allReports.length}</p>
+          </div>
+          <div className="w-px h-8 bg-white/10" />
+          <div className="text-center">
+            <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Active Nodes</p>
+            <p className="text-xl font-black text-emerald-500">4/4</p>
+          </div>
+        </div>
       </footer>
     </div>
   );

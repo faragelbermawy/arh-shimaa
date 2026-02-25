@@ -50,7 +50,7 @@ export const MODULES: ModuleDefinition[] = [
   {
     id: ModuleId.GENERAL_LEARNING,
     title: 'BICSL Manual',
-    shortDesc: 'Official GDIPC BICSL Manual V3.0 (2025).',
+    shortDesc: 'Official GDIPC BICSL Manual V3.1 (2025).',
     icon: Library,
     color: 'bg-slate-800'
   },
@@ -110,13 +110,13 @@ export const MODULES: ModuleDefinition[] = [
   },
 ];
 
-// PERMANENT APPLICATION CONTENT: BICSL MANUAL V3.0
+// PERMANENT APPLICATION CONTENT: BICSL MANUAL V3.1
 export const BICSL_MANUAL_2025 = {
   header: {
     authority: "General Directorate of Infection Prevention and Control (GDIPC)",
     title: "Basic Infection Control Skills License (BICSL) Manual",
     date: "February 2025",
-    version: "3.0"
+    version: "3.1"
   },
   sections: [
     {
@@ -241,25 +241,29 @@ export const WHO_5_MOMENTS = [
 export const PPE_DATA: PPEProtocol = {
   donning: [
     { 
-      title: '1. Gown (المئزر الواقي)', 
+      title: '1. Gown', 
+      ar: 'المئزر الواقي',
       description: 'Fully cover torso from neck to knees, arms to end of wrists, and wrap around the back.',
       icon: Shirt,
       color: 'bg-blue-500'
     },
     { 
-      title: '2. Mask (القناع الطبي)', 
+      title: '2. Mask', 
+      ar: 'القناع الطبي',
       description: 'Secure ties or elastic bands. Fit flexible band to nose bridge. Fit snug to face and below chin.',
       icon: Shield,
       color: 'bg-emerald-500'
     },
     { 
-      title: '3. Eye Protection (حماية العين)', 
+      title: '3. Eye Protection', 
+      ar: 'حماية العين',
       description: 'Place goggles or face shield over eyes and face. Adjust to fit comfortably.',
       icon: Eye,
       color: 'bg-amber-500'
     },
     { 
-      title: '4. Gloves (القفازات)', 
+      title: '4. Gloves', 
+      ar: 'القفازات',
       description: 'Extend to cover the wrist of the isolation gown completely.',
       icon: Hand,
       color: 'bg-indigo-500'
@@ -267,25 +271,29 @@ export const PPE_DATA: PPEProtocol = {
   ],
   doffing: [
     { 
-      title: '1. Gloves (نزع القفازات)', 
+      title: '1. Gloves', 
+      ar: 'نزع القفازات',
       description: 'Peel off from outside. Slide fingers under remaining glove at wrist to remove.',
       icon: Hand,
       color: 'bg-indigo-500'
     },
     { 
-      title: '2. Eye Protection (نزع الحماية)', 
+      title: '2. Eye Protection', 
+      ar: 'نزع الحماية',
       description: 'Remove goggles or face shield from the back by lifting the headband.',
       icon: Eye,
       color: 'bg-amber-500'
     },
     { 
-      title: '3. Gown (نزع المئزر)', 
+      title: '3. Gown', 
+      ar: 'نزع المئزر',
       description: 'Unfasten ties. Pull away from neck and shoulders, touching inside only.',
       icon: Shirt,
       color: 'bg-blue-500'
     },
     { 
-      title: '4. Mask (نزع القناع)', 
+      title: '4. Mask', 
+      ar: 'نزع القناع',
       description: 'Grasp bottom ties then top ones. Remove without touching the front.',
       icon: Shield,
       color: 'bg-emerald-500'

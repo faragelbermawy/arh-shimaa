@@ -58,7 +58,7 @@ const WeeklyAudit: React.FC = () => {
   const getActiveChecklistData = () => {
     switch(activeAuditType) {
       case 'hand-hygiene': return WHO_5_MOMENTS.map(m => ({ title: m.en, ar: m.ar }));
-      case 'ppe-compliance': return PPE_DATA.donning.map(s => ({ title: s.title, ar: '' }));
+      case 'ppe-compliance': return PPE_DATA.donning.map(s => ({ title: s.title, ar: s.ar || '' }));
       case 'environmental': return ENVIRONMENTAL_CHECKLIST;
       case 'equipment': return EQUIPMENT_CHECKLIST;
       case 'isolation': return ISOLATION_CHECKLIST;
@@ -161,13 +161,14 @@ const WeeklyAudit: React.FC = () => {
     // 2. Attempt background sync to Google Sheets
     syncService.sendToGoogleSheets(newAudit);
 
-    // 3. Save to Firebase
+    // 3. Save to Firebase in type-specific subfolder
     try {
-      const success = await sendToCloud('audits', localAudit);
+      // Modified: Send to audits/type as originally requested
+      const success = await sendToCloud(`audits/${activeAuditType}`, localAudit);
       if (success) {
-        alert("تم حفظ الـ Audit في السحاب بنجاح ✅");
+        console.log(`Audit synced to cloud: audits/${activeAuditType}`);
       } else {
-        // إذا فشل الإنترنت، يحفظ محلياً كخطة بديلة
+        // Fallback for offline
         localStorage.setItem('pending_audit', JSON.stringify(localAudit));
       }
     } catch (error) {
