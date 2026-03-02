@@ -55,14 +55,19 @@ const MdroArchive: React.FC = () => {
     const unsubscribe = onValue(findingsRef, (snapshot) => {
       const val = snapshot.val();
       if (val) {
-        const list = Object.keys(val).map(key => ({ id: key, ...val[key], isMdroFinding: true }));
+        const cloudList = Object.keys(val).map(key => ({ id: key, ...val[key], isMdroFinding: true }));
         setReports(prev => {
-          const combined = [...prev];
-          list.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
-          });
+          const localReports = storageService.getReports().filter(r => r.isMdroFinding);
+          const reportMap = new Map();
+          
+          // Add local first
+          localReports.forEach(r => reportMap.set(r.id, r));
+          // Add cloud (overwrites if same ID)
+          cloudList.forEach(r => reportMap.set(r.id, r));
+          
+          const final = Array.from(reportMap.values());
           // Sort by timestamp descending
-          return combined.sort((a, b) => {
+          return final.sort((a, b) => {
             const dateA = new Date(a.timestamp || 0).getTime();
             const dateB = new Date(b.timestamp || 0).getTime();
             return dateB - dateA;
@@ -259,11 +264,16 @@ const MdroArchive: React.FC = () => {
   const deleteFinding = async (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if (window.confirm("CRITICAL: Purge this MDRO finding from archive?")) {
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
+
+    if (userInput === designerCode) {
       await deleteFromCloud('findings', id);
       storageService.deleteReport(id);
       loadAllData();
-      showLocalToast("Record Purged");
+      showLocalToast("Record Purged by Designer");
+    } else if (userInput !== null) {
+      alert("Unauthorized! Only the Designer can delete findings.");
     }
   };
 
@@ -326,7 +336,7 @@ const MdroArchive: React.FC = () => {
                 {filtered.map((r) => {
                    const hasSource = r.fileData || r.fileData === "__STORED_IN_IDB__";
                    return (
-                  <div key={r.id} className="p-10 rounded-[4rem] border border-slate-100 dark:border-white/5 bg-white dark:bg-slate-900 shadow-xl group overflow-hidden relative">
+                  <div key={r.id} className="p-10 rounded-[4rem] border border-slate-100 dark:border-white/5 bg-white dark:bg-slate-900 shadow-xl group overflow-hidden relative compliance-card">
                     <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:scale-110 transition-transform"><Dna className="w-32 h-32 text-red-600" /></div>
                     <div className="flex justify-between items-start mb-8 relative z-10">
                        <div className="bg-red-600 p-4 rounded-3xl shadow-xl"><AlertTriangle className="w-6 h-6 text-white" /></div>

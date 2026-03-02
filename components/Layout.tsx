@@ -22,7 +22,8 @@ import {
   Share2,
   Dna,
   UserPlus,
-  GripHorizontal
+  GripHorizontal,
+  Waves
 } from 'lucide-react';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -44,6 +45,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const startDockY = useRef(0);
 
   const ADMIN_PIN = "55131";
+  const DESIGNER_PIN = "2231994";
 
   useEffect(() => {
     if (mainContentRef.current) {
@@ -120,6 +122,8 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { path: '/registry', icon: ClipboardList, label: 'REGISTRY', color: 'indigo' },
     { path: '/docs', icon: FileText, label: 'VAULT', color: 'rose' },
     { path: '/sync', icon: CloudSync, label: 'SYNC', color: 'amber' },
+    { path: '/hand-hygiene', icon: Waves, label: 'HAND HYGIENE', color: 'cyan', glow: 'shadow-[0_0_15px_rgba(34,211,238,0.3)]' },
+    { path: '/hand-hygiene-results', icon: FileText, label: 'RESULTS', color: 'emerald', glow: 'shadow-[0_0_10px_rgba(52,211,153,0.2)]' },
   ];
 
   const getColorClasses = (color: string, isActive: boolean) => {
@@ -132,17 +136,26 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       indigo: 'bg-indigo-800 text-white md:bg-indigo-800/10 md:text-indigo-800 dark:md:text-indigo-400',
       rose: 'bg-rose-800 text-white md:bg-rose-800/10 md:text-rose-800 dark:md:text-rose-400',
       amber: 'bg-amber-800 text-white md:bg-amber-800/10 md:text-amber-800 dark:md:text-amber-400',
+      cyan: 'bg-cyan-600 text-white md:bg-cyan-600/10 md:text-cyan-600 dark:md:text-cyan-400',
     };
     return mappings[color] || 'bg-slate-800 text-white';
   };
 
   const handleAdminAuth = () => {
-    if (pinInput === ADMIN_PIN) {
+    if (pinInput === DESIGNER_PIN) {
       setIsAdmin(true);
       sessionStorage.setItem('is_admin_active', 'true');
+      sessionStorage.setItem('is_designer_active', 'true');
       setShowPinModal(false);
       setPinInput('');
-      showToast('Authorized');
+      showToast('Designer Authorized');
+    } else if (pinInput === ADMIN_PIN) {
+      setIsAdmin(true);
+      sessionStorage.setItem('is_admin_active', 'true');
+      sessionStorage.removeItem('is_designer_active');
+      setShowPinModal(false);
+      setPinInput('');
+      showToast('Admin Authorized');
     } else {
       showToast('Invalid PIN');
       setPinInput('');
@@ -240,7 +253,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </button>
 
           <button 
-            onClick={isAdmin ? () => { setIsAdmin(false); sessionStorage.removeItem('is_admin_active'); } : () => setShowPinModal(true)} 
+            onClick={isAdmin ? () => { 
+              setIsAdmin(false); 
+              sessionStorage.removeItem('is_admin_active'); 
+              sessionStorage.removeItem('is_designer_active');
+            } : () => setShowPinModal(true)} 
             className={`p-2.5 rounded-xl transition-all active:scale-90 ${isAdmin ? 'text-emerald-500 bg-emerald-500/10' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5'}`}
             title={isAdmin ? "Admin Active" : "Admin Login"}
           >
@@ -285,6 +302,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 <Link to={item.path} className={`
                   flex flex-col lg:flex-row items-center gap-3 p-4 md:p-3 rounded-[2rem] transition-all 
                   ${getColorClasses(item.color, isActive)}
+                  ${isActive && (item as any).glow ? (item as any).glow : ''}
                   w-24 md:w-auto active:scale-95 md:active:scale-100
                 `}>
                   <Icon className="w-6 h-6 pointer-events-none" />
@@ -309,7 +327,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-1">DESIGNED BY FARAG ELBERMAWY LTC</p>
           <p className="text-[8px] font-bold uppercase tracking-widest mb-4">ARH-LTC Clinical Intelligence Hub</p>
           <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-            Version: 1.0.9 — Build: 2026-02-25
+            Version: 1.1.0 — Build: 2026-03-01
           </div>
         </footer>
       </main>

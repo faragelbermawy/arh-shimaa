@@ -13,9 +13,11 @@ const VisitorRegistry: React.FC = () => {
   const [dept, setDept] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDesigner, setIsDesigner] = useState(false);
 
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains('dark'));
+    setIsDesigner(sessionStorage.getItem('is_designer_active') === 'true');
     
     // Initial load
     setVisitors(storageService.getVisitors());
@@ -25,14 +27,19 @@ const VisitorRegistry: React.FC = () => {
     const unsubscribe = onValue(registriesRef, (snapshot) => {
       const val = snapshot.val();
       if (val) {
-        const list = Object.keys(val).map(key => ({ id: key, ...val[key] }));
+        const cloudList = Object.keys(val).map(key => ({ id: key, ...val[key] }));
         setVisitors(prev => {
-          const combined = [...prev];
-          list.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
-          });
+          const localVisitors = storageService.getVisitors();
+          const visitorMap = new Map();
+          
+          // Add local first
+          localVisitors.forEach(v => visitorMap.set(v.id, v));
+          // Add cloud (overwrites if same ID)
+          cloudList.forEach(v => visitorMap.set(v.id, v));
+          
+          const final = Array.from(visitorMap.values());
           // Sort by timestamp descending
-          return combined.sort((a, b) => {
+          return final.sort((a, b) => {
             const dateA = new Date(a.timestamp || 0).getTime();
             const dateB = new Date(b.timestamp || 0).getTime();
             return dateB - dateA;
@@ -79,10 +86,16 @@ const VisitorRegistry: React.FC = () => {
 
   const handleDeleteVisitor = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm("Purge this visitor log from history?")) {
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
+
+    if (userInput === designerCode) {
       await deleteFromCloud('registries', id);
       storageService.deleteVisitor(id);
       setVisitors(storageService.getVisitors());
+      alert("Visitor log purged by Designer.");
+    } else if (userInput !== null) {
+      alert("Unauthorized! Only the Designer can delete logs.");
     }
   };
 
@@ -114,7 +127,7 @@ const VisitorRegistry: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
         <div className="lg:col-span-1">
-          <form onSubmit={handleCheckIn} className={`p-8 rounded-[3rem] border shadow-2xl space-y-8 sticky top-10 transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
+          <form onSubmit={handleCheckIn} className={`p-8 rounded-[3rem] border shadow-2xl space-y-8 sticky top-10 transition-colors compliance-card ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
             <h3 className="font-black text-sm uppercase flex items-center gap-3"><UserPlus className="w-5 h-5 text-blue-600" /> Quick Register</h3>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -138,7 +151,7 @@ const VisitorRegistry: React.FC = () => {
            </h3>
            
            {visitors.length > 0 ? (
-             <div className={`rounded-[3.5rem] border shadow-sm overflow-hidden p-3 transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
+             <div className={`rounded-[3.5rem] border shadow-sm overflow-hidden p-3 transition-colors compliance-card ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
                 <div className="space-y-2">
                   {visitors.map((v) => (
                     <div key={v.id} className={`flex items-center justify-between p-6 rounded-[2.5rem] transition-all border border-transparent group/item ${isDarkMode ? 'hover:bg-slate-950 hover:border-slate-800' : 'hover:bg-slate-50 hover:border-slate-100'}`}>
@@ -155,12 +168,14 @@ const VisitorRegistry: React.FC = () => {
                          <div className="text-right">
                             <p className="text-[9px] font-black text-slate-300 uppercase">{v.timestamp}</p>
                          </div>
-                         <button 
-                           onClick={(e) => handleDeleteVisitor(v.id, e)}
-                           className="p-3 rounded-xl bg-red-50 text-red-600 opacity-0 group-hover/item:opacity-100 transition-all hover:bg-red-600 hover:text-white"
-                         >
-                            <Trash2 className="w-4 h-4" />
-                         </button>
+                         {isDesigner && (
+                           <button 
+                             onClick={(e) => handleDeleteVisitor(v.id, e)}
+                             className="p-3 rounded-xl bg-red-50 text-red-600 opacity-0 group-hover/item:opacity-100 transition-all hover:bg-red-600 hover:text-white"
+                           >
+                              <Trash2 className="w-4 h-4" />
+                           </button>
+                         )}
                       </div>
                     </div>
                   ))}

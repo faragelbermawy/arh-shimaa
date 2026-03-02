@@ -165,6 +165,31 @@ export const storageService = {
     await storageService.deleteBlob(id);
   },
 
+  updateReport: async (report: ClinicalReport) => {
+    const existing = storageService.getReports();
+    const index = existing.findIndex(r => r.id === report.id);
+    if (index === -1) return;
+    
+    if (report.fileData && report.fileData !== "__STORED_IN_IDB__") {
+      await storageService.saveBlob(report.id, report.fileData);
+      report.fileData = "__STORED_IN_IDB__";
+    }
+    
+    const updated = [...existing];
+    updated[index] = report;
+    storageService.set(KEYS.REPORTS, updated);
+  },
+
+  updateAudit: (audit: AuditRecord) => {
+    const existing = storageService.getAudits();
+    const index = existing.findIndex(a => a.id === audit.id);
+    if (index === -1) return;
+    
+    const updated = [...existing];
+    updated[index] = audit;
+    storageService.set(KEYS.AUDITS, updated);
+  },
+
   deleteAudit: (id: string) => {
     const existing = storageService.getAudits();
     storageService.set(KEYS.AUDITS, existing.filter(a => a.id !== id));

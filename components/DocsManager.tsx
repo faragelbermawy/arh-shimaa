@@ -37,7 +37,9 @@ import {
   ShieldCheck,
   Camera,
   FileUp as FileUpIcon,
-  CheckCircle
+  CheckCircle,
+  Edit,
+  Edit2
 } from 'lucide-react';
 import { db, sendToCloud, deleteFromCloud, clearCloudPath } from '../services/firebase';
 import { ref, onValue } from "firebase/database";
@@ -87,7 +89,10 @@ const DocsManager: React.FC = () => {
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
   const [viewingOriginal, setViewingOriginal] = useState(false);
   const [reportWithData, setReportWithData] = useState<any | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(true); // Default to true for full control
+  const [isDesigner, setIsDesigner] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editData, setEditData] = useState<any>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -107,6 +112,7 @@ const DocsManager: React.FC = () => {
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains('dark'));
     setIsAdmin(sessionStorage.getItem('is_admin_active') === 'true');
+    setIsDesigner(sessionStorage.getItem('is_designer_active') === 'true');
     
     const paths = ['audits', 'reports', 'findings', 'registries'];
     const unsubscribes: (() => void)[] = [];
@@ -132,7 +138,14 @@ const DocsManager: React.FC = () => {
         }
         
         aggregatedData[path] = pathData;
-        const allCombined = Object.values(aggregatedData).flat();
+        
+        // Robust deduplication across all paths
+        const dedupeMap = new Map();
+        Object.values(aggregatedData).flat().forEach(item => {
+          if (item.id) dedupeMap.set(item.id, item);
+        });
+        
+        const allCombined = Array.from(dedupeMap.values());
         setAllReports(allCombined);
         setLoading(false);
       });
@@ -149,6 +162,7 @@ const DocsManager: React.FC = () => {
 
   const handleOpenReport = async (report: any) => {
     setIsProcessing(true);
+    setIsEditing(false);
     try {
       const fullData = await storageService.getReportWithData(report.id);
       if (fullData) {
@@ -168,32 +182,77 @@ const DocsManager: React.FC = () => {
 
   const handleDeleteReport = async (id: string, e?: React.MouseEvent) => {
     if (e) {
+      e.preventDefault();
       e.stopPropagation();
     }
     
-    const reportToDelete = allReports.find(r => r.id === id);
-    if (!reportToDelete) return;
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
 
-    if (window.confirm("CRITICAL: Purge this clinical record from vault?")) {
-      // 1. Delete from Firebase if it has a source path
-      if (reportToDelete.sourcePath) {
-        await deleteFromCloud(reportToDelete.sourcePath, id);
+    if (userInput !== designerCode) {
+      if (userInput !== null) alert("Unauthorized! Only the Designer can delete records.");
+      return;
+    }
+
+    // Find the report to get its source path
+    const reportToDelete = allReports.find(r => r.id === id);
+    
+    setIsProcessing(true);
+    try {
+      // 1. Try to delete from cloud using known source path
+      if (reportToDelete?.sourcePath) {
+        let deletePath = reportToDelete.sourcePath;
+        if (deletePath === 'audits' && reportToDelete.auditType) {
+          deletePath = `audits/${reportToDelete.auditType}`;
+        }
+        await deleteFromCloud(deletePath, id);
       }
+
+      // 2. Aggressive Cloud Cleanup: Try all possible paths just in case
+      const possiblePaths = [
+        'findings', 
+        'reports', 
+        'audits/hand-hygiene', 
+        'audits/ppe-compliance', 
+        'audits/environmental', 
+        'audits/equipment', 
+        'audits/isolation', 
+        'audits/visitors', 
+        'audits/education'
+      ];
       
-      // 2. Delete locally
+      // Run deletions in parallel for speed
+      await Promise.all(possiblePaths.map(path => deleteFromCloud(path, id)));
+
+      // 3. Delete locally
       await storageService.deleteReport(id);
       
+      // 4. Update UI state immediately
       setAllReports(prev => prev.filter(r => r.id !== id));
       if (selectedReport?.id === id) {
         setSelectedReport(null);
         setReportWithData(null);
+        setIsEditing(false);
       }
-      showToast("Record Purged");
+      
+      showToast("Record Permanently Deleted");
+    } catch (err) {
+      console.error("Force deletion failed", err);
+      showToast("Error during deletion");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleClearAll = async () => {
-    if (!isAdmin) return;
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
+
+    if (userInput !== designerCode) {
+      if (userInput !== null) alert("Unauthorized! Only the Designer can purge the vault.");
+      return;
+    }
+
     const confirmMsg = selectedCategory 
       ? `CRITICAL: Purge ALL records in ${selectedCategory}?`
       : "CRITICAL: Purge ALL clinical records in the vault?";
@@ -295,7 +354,7 @@ const DocsManager: React.FC = () => {
     doc.setFont('helvetica', 'bold');
     doc.text("AI CLINICAL SUMMARY / NOTES:", 20, summaryY);
     doc.setFont('helvetica', 'normal');
-    const splitSummary = doc.splitTextToSize(report.summary || "No clinical summary available.", 170);
+    const splitSummary = doc.splitTextToSize(report.summary || report.notes || "No clinical summary available.", 170);
     doc.text(splitSummary, 20, summaryY + 7);
 
     // Original Image Page
@@ -415,6 +474,55 @@ const DocsManager: React.FC = () => {
     }
   };
 
+  const handleEditReport = (report: any) => {
+    setEditData({ ...report });
+    setSelectedReport(report);
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editData) return;
+    setIsProcessing(true);
+    try {
+      // 1. Update locally
+      if (editData.isMdroFinding) {
+        await storageService.updateReport(editData);
+      } else {
+        // It's an audit
+        storageService.updateAudit(editData);
+        // Also update the corresponding report in vault if it exists
+        const reports = storageService.getReports();
+        const vaultReport = reports.find(r => r.id === `audit-${editData.id}` || r.id === editData.id);
+        if (vaultReport) {
+          const updatedVault = {
+            ...vaultReport,
+            unitName: editData.department || editData.unitName,
+            auditor: editData.auditor,
+            audienceName: editData.audienceName,
+            staffGroup: editData.staffGroup,
+            summary: editData.notes || editData.summary,
+            totalScore: editData.totalScore || editData.score
+          };
+          await storageService.updateReport(updatedVault);
+        }
+      }
+
+      // 2. Update cloud
+      const cloudPath = editData.isMdroFinding ? 'findings' : `audits/${editData.auditType || 'general'}`;
+      await sendToCloud(cloudPath, editData);
+
+      showToast("Record Updated Successfully");
+      setIsEditing(false);
+      setEditData(null);
+      setSelectedReport(null);
+    } catch (err) {
+      console.error("Update failed", err);
+      showToast("Update Failed");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const filteredReports = allReports.filter(r => {
     const matchesCategory = selectedCategory 
       ? (r.auditType === selectedCategory || r.sourcePath === selectedCategory)
@@ -504,7 +612,7 @@ const DocsManager: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto">
-          {isAdmin && (allReports.length > 0 || (selectedCategory && getCategoryCount(selectedCategory) > 0)) && (
+          {isDesigner && (allReports.length > 0 || (selectedCategory && getCategoryCount(selectedCategory) > 0)) && (
             <button 
               onClick={handleClearAll}
               className="flex-1 sm:flex-none bg-red-600/10 hover:bg-red-600 text-red-600 hover:text-white px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all border border-red-600/20 shadow-xl"
@@ -551,27 +659,24 @@ const DocsManager: React.FC = () => {
               <button
                 key={cat.id}
                 onClick={() => navigate(`/docs?type=${cat.id}`)}
-                className={`group relative p-10 rounded-[4rem] border transition-all duration-500 text-left overflow-hidden hover:shadow-2xl hover:-translate-y-2 ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-100'}`}
+                className="bg-white dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/50 rounded-3xl p-8 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1 group text-left relative overflow-hidden"
               >
-                <div className={`absolute inset-0 bg-gradient-to-br ${cat.bgGradient} opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
-                
-                <div className="relative z-10 space-y-8">
-                  <div className={`w-20 h-20 rounded-[2.5rem] flex items-center justify-center ${cat.color} bg-slate-950/10 shadow-inner group-hover:scale-110 transition-transform duration-500`}>
-                    <cat.icon className="w-10 h-10" />
-                  </div>
-                  
-                  <div>
-                    <h3 className="text-2xl font-black uppercase tracking-tighter text-white group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                      {cat.label}
-                    </h3>
-                    <div className="flex items-center gap-3 mt-3">
-                      <div className="px-4 py-1.5 bg-slate-950/20 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
-                        {count} Records
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-600 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
-                    </div>
-                  </div>
+                {/* خلفية الأيقونة الدائرية */}
+                <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-6 bg-gray-100 dark:bg-gray-700/50 group-hover:scale-110 transition-transform duration-500 ${cat.color}`}>
+                  <cat.icon size={40} />
                 </div>
+
+                {/* النصوص الثابتة */}
+                <h3 className="text-gray-900 dark:text-gray-100 font-black text-2xl mb-2 uppercase tracking-tighter">
+                  {cat.label}
+                </h3>
+                
+                <p className="text-gray-500 dark:text-gray-400 text-sm font-bold uppercase tracking-widest">
+                  {count} RECORDS
+                </p>
+
+                {/* Decorative Gradient on Hover */}
+                <div className={`absolute bottom-0 left-0 h-1 w-0 group-hover:w-full transition-all duration-500 bg-gradient-to-r ${cat.bgGradient}`} />
               </button>
             );
           })}
@@ -582,57 +687,81 @@ const DocsManager: React.FC = () => {
           {filteredReports.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredReports.map((report) => (
-                <div 
-                  key={report.id} 
-                  onClick={() => handleOpenReport(report)}
-                  className="bg-slate-900/50 backdrop-blur-sm border border-white/5 p-8 rounded-[2.5rem] flex justify-between items-center group hover:border-blue-500/30 transition-all duration-500 shadow-xl cursor-pointer"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Building2 className="w-4 h-4 text-blue-500" />
-                      <h4 className="text-white font-black uppercase text-sm tracking-tight truncate max-w-[180px]">
-                        {report.department || report.unitName || 'General Unit'}
-                      </h4>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-500 text-[10px] font-bold uppercase">
-                      <Clock className="w-3.5 h-3.5" />
-                      {report.timestamp}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 mt-4">
-                      <div className="px-4 py-1.5 bg-emerald-500/10 text-emerald-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
-                        Score: {report.extractedScores?.handHygiene ?? report.totalScore ?? 0}%
+                  <div 
+                    key={report.id} 
+                    className="relative bg-slate-900/50 backdrop-blur-sm border border-white/5 p-8 pr-32 rounded-[2.5rem] flex flex-col md:flex-row justify-between items-start md:items-center gap-6 group hover:border-blue-500/30 transition-all duration-500 shadow-xl"
+                  >
+                    <div 
+                      className="flex-1 space-y-3 cursor-pointer w-full"
+                      onClick={() => handleOpenReport(report)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-blue-500" />
+                        <h4 className="text-white font-black uppercase text-sm tracking-tight truncate max-w-[180px]">
+                          {report.department || report.unitName || 'General Unit'}
+                          <span className="ml-2 text-[10px] text-slate-300 lowercase font-bold">by {report.auditor || 'N/A'}</span>
+                        </h4>
                       </div>
-                      {report.mdroTransmission && (
-                        <div className="px-4 py-1.5 bg-red-500/10 text-red-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-500/20">
-                          {report.mdroTransmission}
+                      <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase">
+                        <Clock className="w-3.5 h-3.5 text-blue-400" />
+                        {report.timestamp}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 mt-4">
+                        <div className="px-4 py-1.5 bg-emerald-500/10 text-emerald-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-emerald-500/20">
+                          Score: {report.extractedScores?.handHygiene ?? report.totalScore ?? 0}%
                         </div>
+                        {report.mdroTransmission && (
+                          <div className="px-4 py-1.5 bg-red-500/10 text-red-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-500/20">
+                            {report.mdroTransmission}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* --- بداية كود تنسيق الأزرار الجديد --- */}
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 grid grid-cols-2 gap-2 p-2 bg-gray-900/50 rounded-xl shadow-inner border border-white/5">
+                      
+                      {/* الزر 1: المعاينة (View) */}
+                      <button 
+                        onClick={() => handleOpenReport(report)}
+                        className="p-3 bg-gray-800 rounded-lg text-amber-400 hover:bg-amber-500 hover:text-white transition-all active:scale-90"
+                        title="View Details"
+                      >
+                        <Eye size={20} />
+                      </button>
+                      
+                      {/* الزر 2: التعديل (Edit) */}
+                      <button 
+                        onClick={() => handleEditReport(report)}
+                        className="p-3 bg-blue-900/60 rounded-lg text-blue-400 hover:bg-blue-500 hover:text-white transition-all active:scale-90"
+                        title="Edit Report"
+                      >
+                        <Edit2 size={20} />
+                      </button>
+                      
+                      {/* الزر 3: المسح (Delete) */}
+                      {isDesigner && (
+                        <button 
+                          onClick={() => handleDeleteReport(report.id)}
+                          className="p-3 bg-red-950/80 rounded-lg text-red-500 hover:bg-red-600 hover:text-white transition-all active:scale-90"
+                          title="Delete Report"
+                        >
+                          <Trash2 size={20} />
+                        </button>
                       )}
+                      
+                      {/* الزر 4: المشاركة/التنزيل (Share/Download) */}
+                      <button 
+                        onClick={() => handleShareReport(report, 'whatsapp')}
+                        className="p-3 bg-gray-800 rounded-lg text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all active:scale-90"
+                        title="Share Report"
+                      >
+                        <Share2 size={20} />
+                      </button>
+
                     </div>
+                    {/* --- نهاية كود التنسيق --- */}
                   </div>
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={(e) => handleDeleteReport(report.id, e)}
-                        className="p-4 bg-red-600/20 text-red-500 rounded-2xl hover:bg-red-600 hover:text-white transition-all active:scale-90 shadow-lg"
-                        title="Delete Report"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleShareReport(report, 'whatsapp'); }}
-                        className="p-4 bg-emerald-600/20 text-emerald-500 rounded-2xl hover:bg-emerald-600 hover:text-white transition-all active:scale-90 shadow-lg"
-                        title="Share on WhatsApp"
-                      >
-                        <Share2 className="w-5 h-5" />
-                      </button>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleDownloadReport(report); }}
-                        className="p-4 bg-slate-800 rounded-2xl text-white hover:bg-blue-600 transition-all active:scale-90 shadow-lg group-hover:shadow-blue-900/20"
-                        title="Download PDF"
-                      >
-                        <Download className="w-5 h-5" />
-                      </button>
-                    </div>
-                </div>
               ))}
             </div>
           ) : (
@@ -680,7 +809,85 @@ const DocsManager: React.FC = () => {
             {/* Modal Content */}
             <div className="flex-1 overflow-y-auto p-8 space-y-8">
               
-              {viewingOriginal && reportWithData?.fileData ? (
+              {isEditing ? (
+                <div className="space-y-6 animate-in slide-in-from-bottom-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Unit / Department</label>
+                      <input 
+                        value={editData.unitName || editData.department || ''} 
+                        onChange={e => setEditData({...editData, unitName: e.target.value, department: e.target.value})}
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Auditor Name</label>
+                      <input 
+                        value={editData.auditor || ''} 
+                        onChange={e => setEditData({...editData, auditor: e.target.value})}
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Personnel Audited</label>
+                      <input 
+                        value={editData.audienceName || ''} 
+                        onChange={e => setEditData({...editData, audienceName: e.target.value})}
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Staff Group</label>
+                      <input 
+                        value={editData.staffGroup || ''} 
+                        onChange={e => setEditData({...editData, staffGroup: e.target.value})}
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    {editData.isMdroFinding && (
+                      <div className="space-y-2 col-span-full">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Organism Identified</label>
+                        <input 
+                          value={editData.mdroTransmission || ''} 
+                          onChange={e => setEditData({...editData, mdroTransmission: e.target.value})}
+                          className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Compliance Score (%)</label>
+                      <input 
+                        type="number"
+                        value={editData.totalScore || editData.score || 0} 
+                        onChange={e => setEditData({...editData, totalScore: parseInt(e.target.value), score: parseInt(e.target.value)})}
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AI Summary / Clinical Notes</label>
+                    <textarea 
+                      value={editData.summary || editData.notes || ''} 
+                      onChange={e => setEditData({...editData, summary: e.target.value, notes: e.target.value})}
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-4 text-white text-sm outline-none focus:ring-1 focus:ring-blue-500 h-32"
+                    />
+                  </div>
+                  <div className="flex gap-4 pt-4">
+                    <button 
+                      onClick={handleSaveEdit}
+                      className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all"
+                    >
+                      Save Changes
+                    </button>
+                    <button 
+                      onClick={() => setIsEditing(false)}
+                      className="flex-1 bg-slate-800 text-slate-400 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : viewingOriginal && reportWithData?.fileData ? (
                 <div className="rounded-3xl overflow-hidden border border-white/10 bg-black flex items-center justify-center min-h-[300px]">
                   {reportWithData.fileMimeType?.includes('pdf') ? (
                     <div className="p-10 text-center space-y-4">
@@ -716,7 +923,7 @@ const DocsManager: React.FC = () => {
                       <p className="text-[10px] font-black uppercase tracking-widest">AI Summary / Personnel Notes</p>
                     </div>
                     <div className="p-6 rounded-[2rem] bg-slate-800/50 border border-white/5 italic text-slate-300 text-sm leading-relaxed">
-                      "{selectedReport.summary || 'No clinical summary available for this record.'}"
+                      "{selectedReport.summary || selectedReport.notes || 'No clinical summary available for this record.'}"
                     </div>
                   </div>
 
@@ -756,38 +963,50 @@ const DocsManager: React.FC = () => {
             </div>
 
             {/* Modal Footer Actions */}
-            <div className="p-8 border-t border-white/5 bg-slate-900/80 backdrop-blur-sm grid grid-cols-2 md:grid-cols-3 gap-4">
-              <button 
-                onClick={() => setViewingOriginal(!viewingOriginal)}
-                disabled={!reportWithData?.fileData}
-                className={`flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 ${viewingOriginal ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-50'}`}
-              >
-                <Eye className="w-4 h-4" /> {viewingOriginal ? 'Show Details' : 'View Original'}
-              </button>
-              <button 
-                onClick={() => handleDownloadReport(selectedReport)}
-                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-all active:scale-95"
-              >
-                <Download className="w-4 h-4" /> Get PDF
-              </button>
-              <button 
-                onClick={() => handleShareReport(selectedReport, 'system')}
-                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-white text-slate-900 font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all active:scale-95"
-              >
-                <Share2 className="w-4 h-4" /> System Share
-              </button>
-              <button 
-                onClick={() => handleShareReport(selectedReport, 'whatsapp')}
-                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-emerald-500 transition-all active:scale-95"
-              >
-                <MessageSquare className="w-4 h-4" /> Send PDF
-              </button>
-              <button 
-                onClick={() => handleDeleteReport(selectedReport.id)}
-                className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-red-600/20 text-red-500 font-black text-[10px] uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all active:scale-95"
-              >
-                <Trash2 className="w-4 h-4" /> Purge Record
-              </button>
+            <div className="p-6 border-t border-white/5 bg-slate-900/80 backdrop-blur-sm">
+              {!isEditing && (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <button 
+                    onClick={() => setViewingOriginal(!viewingOriginal)}
+                    disabled={!reportWithData?.fileData}
+                    className={`flex items-center justify-center gap-2 py-3.5 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all active:scale-95 border border-white/5 ${viewingOriginal ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-50'}`}
+                  >
+                    <Eye className="w-3.5 h-3.5" /> {viewingOriginal ? 'Details' : 'Original'}
+                  </button>
+                  <button 
+                    onClick={() => handleEditReport(selectedReport)}
+                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-amber-600/10 text-amber-500 border border-amber-500/20 font-black text-[9px] uppercase tracking-widest hover:bg-amber-600 hover:text-white transition-all active:scale-95"
+                  >
+                    <Edit className="w-3.5 h-3.5" /> Edit
+                  </button>
+                  <button 
+                    onClick={() => handleDownloadReport(selectedReport)}
+                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-blue-600 text-white font-black text-[9px] uppercase tracking-widest hover:bg-blue-500 transition-all active:scale-95 shadow-lg shadow-blue-900/20"
+                  >
+                    <Download className="w-3.5 h-3.5" /> PDF
+                  </button>
+                  <button 
+                    onClick={() => handleShareReport(selectedReport, 'system')}
+                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-white/5 text-white border border-white/10 font-black text-[9px] uppercase tracking-widest hover:bg-white/10 transition-all active:scale-95"
+                  >
+                    <Share2 className="w-3.5 h-3.5" /> Share
+                  </button>
+                  <button 
+                    onClick={() => handleShareReport(selectedReport, 'whatsapp')}
+                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-emerald-600/10 text-emerald-500 border border-emerald-500/20 font-black text-[9px] uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all active:scale-95"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" /> WhatsApp
+                  </button>
+                  {isDesigner && (
+                    <button 
+                      onClick={() => handleDeleteReport(selectedReport.id)}
+                      className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-red-600/10 text-red-500 border border-red-600/20 font-black text-[9px] uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all active:scale-95"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -120,22 +120,32 @@ const Dashboard: React.FC = () => {
     const auditsRef = ref(db, 'audits');
     unsubscribes.push(onValue(auditsRef, (snapshot) => {
       const val = snapshot.val();
-      // Only clear if we actually got a value or null from server
-      // to avoid flickering during reconnection
       if (val !== undefined) {
-        aggregatedData.audits = {};
+        const cloudAudits: Record<string, any> = {};
         if (val) {
           Object.keys(val).forEach(key => {
             const item = val[key];
             if (item.id && item.totalScore !== undefined) {
-              aggregatedData.audits[key] = { id: key, ...item };
+              cloudAudits[key] = { id: key, ...item };
             } else if (typeof item === 'object') {
               Object.keys(item).forEach(subKey => {
-                aggregatedData.audits[subKey] = { id: subKey, auditType: key, ...item[subKey] };
+                cloudAudits[subKey] = { id: subKey, auditType: key, ...item[subKey] };
               });
             }
           });
         }
+        
+        // Merge with local to ensure no data loss and no duplicates
+        const localAudits = storageService.getAudits();
+        const dedupeMap = new Map();
+        localAudits.forEach(a => dedupeMap.set(a.id, a));
+        Object.values(cloudAudits).forEach((a: any) => dedupeMap.set(a.id, a));
+        
+        // Convert back to object format for aggregatedData
+        const merged: Record<string, any> = {};
+        dedupeMap.forEach((val, key) => merged[key] = val);
+        aggregatedData.audits = merged;
+        
         updateState();
       }
     }));
@@ -145,12 +155,22 @@ const Dashboard: React.FC = () => {
     unsubscribes.push(onValue(registriesRef, (snapshot) => {
       const val = snapshot.val();
       if (val !== undefined) {
-        aggregatedData.registries = {};
+        const cloudRegistries: Record<string, any> = {};
         if (val) {
           Object.keys(val).forEach(key => {
-            aggregatedData.registries[key] = { id: key, ...val[key] };
+            cloudRegistries[key] = { id: key, ...val[key] };
           });
         }
+        
+        const local = storageService.getVisitors();
+        const dedupeMap = new Map();
+        local.forEach(v => dedupeMap.set(v.id, v));
+        Object.values(cloudRegistries).forEach((v: any) => dedupeMap.set(v.id, v));
+        
+        const merged: Record<string, any> = {};
+        dedupeMap.forEach((val, key) => merged[key] = val);
+        aggregatedData.registries = merged;
+        
         updateState();
       }
     }));
@@ -160,12 +180,22 @@ const Dashboard: React.FC = () => {
     unsubscribes.push(onValue(findingsRef, (snapshot) => {
       const val = snapshot.val();
       if (val !== undefined) {
-        aggregatedData.findings = {};
+        const cloudFindings: Record<string, any> = {};
         if (val) {
           Object.keys(val).forEach(key => {
-            aggregatedData.findings[key] = { id: key, ...val[key], isMdroFinding: true };
+            cloudFindings[key] = { id: key, ...val[key], isMdroFinding: true };
           });
         }
+        
+        const local = storageService.getReports().filter(r => r.isMdroFinding);
+        const dedupeMap = new Map();
+        local.forEach(r => dedupeMap.set(r.id, r));
+        Object.values(cloudFindings).forEach((r: any) => dedupeMap.set(r.id, r));
+        
+        const merged: Record<string, any> = {};
+        dedupeMap.forEach((val, key) => merged[key] = val);
+        aggregatedData.findings = merged;
+        
         updateState();
       }
     }));
@@ -175,19 +205,29 @@ const Dashboard: React.FC = () => {
     unsubscribes.push(onValue(reportsRef, (snapshot) => {
       const val = snapshot.val();
       if (val !== undefined) {
-        aggregatedData.reports = {};
+        const cloudReports: Record<string, any> = {};
         if (val) {
           Object.keys(val).forEach(type => {
             const typeData = val[type];
             if (typeData.id) {
-              aggregatedData.reports[type] = { id: type, ...typeData };
+              cloudReports[type] = { id: type, ...typeData };
             } else if (typeof typeData === 'object' && typeData !== null) {
               Object.keys(typeData).forEach(id => {
-                aggregatedData.reports[id] = { id, auditType: type, ...typeData[id] };
+                cloudReports[id] = { id, auditType: type, ...typeData[id] };
               });
             }
           });
         }
+        
+        const local = storageService.getReports();
+        const dedupeMap = new Map();
+        local.forEach(r => dedupeMap.set(r.id, r));
+        Object.values(cloudReports).forEach((r: any) => dedupeMap.set(r.id, r));
+        
+        const merged: Record<string, any> = {};
+        dedupeMap.forEach((val, key) => merged[key] = val);
+        aggregatedData.reports = merged;
+        
         updateState();
       }
     }));
@@ -256,8 +296,26 @@ const Dashboard: React.FC = () => {
 
     const avgCompliance = weekAudits.length > 0 ? Math.round(totalCompliance / weekAudits.length) : 0;
 
-    return { chartData, avgCompliance, weekCount: weekAudits.length };
-  }, [audits]);
+    // Auditor Activity Stats (Combined Audits and Reports)
+    const getAuditorStats = (allAudits: any[], allReports: any[]) => {
+      const combined = [...allAudits, ...allReports];
+      const stats = combined.reduce((acc, report) => {
+        // التأكد من قراءة الاسم بشكل صحيح وتجنب "Unknown"
+        const name = report.auditor?.trim() || "Unspecified";
+        acc[name] = (acc[name] || 0) + 1;
+        return acc;
+      }, {});
+
+      // تحويل البيانات لشكل الرسم البياني مع عرض "الجميع" بدون .slice()
+      return Object.entries(stats)
+        .map(([name, value]) => ({ name, value: value as number }))
+        .sort((a, b) => b.value - a.value); // ترتيب من الأكثر للأقل
+    };
+
+    const auditorChartData = getAuditorStats(audits, reports);
+
+    return { chartData, avgCompliance, weekCount: weekAudits.length, auditorChartData };
+  }, [audits, reports]);
 
   return (
     <div className="space-y-6 md:space-y-8 animate-in fade-in duration-700 pb-12">
@@ -271,7 +329,7 @@ const Dashboard: React.FC = () => {
           </p>
         </div>
         <div className="bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg">
-          <p className="text-[8px] font-black text-blue-600 uppercase tracking-widest">v1.0.9 Stable</p>
+          <p className="text-[8px] font-black text-blue-600 uppercase tracking-widest">v1.1.0 Stable</p>
         </div>
         {lastGlobalSync && (
           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -531,6 +589,60 @@ const Dashboard: React.FC = () => {
                 {auditStats.avgCompliance >= 90 ? 'Optimal' : 'Review Needed'}
               </span>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Auditor Activity Section */}
+      <section className="grid grid-cols-1 gap-6">
+        <div className={`p-8 rounded-[3rem] border shadow-sm transition-all duration-500 ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-100'}`}>
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-4">
+              <div className="bg-indigo-600 p-3 rounded-xl shadow-lg"><Users className="w-6 h-6 text-white" /></div>
+              <div>
+                <h3 className="font-black text-sm uppercase tracking-tight">Auditor Activity Leaderboard</h3>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">Top Performing Auditors (Total Audits)</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="h-[350px] w-full min-h-[350px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={auditStats.auditorChartData} layout="vertical" margin={{ left: 40, right: 40 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={isDarkMode ? '#334155' : '#e2e8f0'} />
+                <XAxis 
+                  type="number"
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 9, fontWeight: 900, fill: isDarkMode ? '#94a3b8' : '#64748b' }}
+                />
+                <YAxis 
+                  dataKey="name" 
+                  type="category"
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 10, fontWeight: 900, fill: isDarkMode ? '#cbd5e1' : '#1e293b' }}
+                  width={120}
+                />
+                <Tooltip 
+                  cursor={{ fill: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }}
+                  contentStyle={{ 
+                    backgroundColor: isDarkMode ? '#0f172a' : '#ffffff', 
+                    borderRadius: '1rem', 
+                    border: 'none', 
+                    boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)',
+                    fontSize: '10px',
+                    fontWeight: 900,
+                    textTransform: 'uppercase'
+                  }}
+                />
+                <Bar dataKey="value" radius={[0, 10, 10, 0]} barSize={30}>
+                  {auditStats.auditorChartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f59e0b'][index % 5]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </section>

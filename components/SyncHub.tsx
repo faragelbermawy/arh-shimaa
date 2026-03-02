@@ -115,25 +115,38 @@ const SyncHub: React.FC = () => {
   };
 
   const handleFactoryReset = () => {
-    if (window.confirm("CRITICAL: Wipe ALL terminal data? This will clear all progress, reports, and audits permanently.")) {
-      storageService.clearAllData();
-      window.location.reload();
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
+
+    if (userInput === designerCode) {
+      if (window.confirm("CRITICAL: Wipe ALL terminal data? This will clear all progress, reports, and audits permanently.")) {
+        storageService.clearAllData();
+        window.location.reload();
+      }
+    } else if (userInput !== null) {
+      alert("Unauthorized! Only the Designer can perform a factory reset.");
     }
   };
 
   const handleCloudReset = async () => {
-    if (!isAdmin) return;
-    if (window.confirm("⚠️ WARNING: This will permanently delete ALL data from the CLOUD (Firebase). This cannot be undone. Are you sure?")) {
-      setIsProcessing(true);
-      try {
-        const paths = ['audits', 'registries', 'findings', 'reports', 'vaults'];
-        await Promise.all(paths.map(path => clearCloudPath(path)));
-        setStatus({ type: 'success', message: 'Cloud Database Cleared Successfully.' });
-      } catch (e) {
-        setStatus({ type: 'error', message: 'Failed to clear cloud database.' });
-      } finally {
-        setIsProcessing(false);
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
+
+    if (userInput === designerCode) {
+      if (window.confirm("⚠️ WARNING: This will permanently delete ALL data from the CLOUD (Firebase). This cannot be undone. Are you sure?")) {
+        setIsProcessing(true);
+        try {
+          const paths = ['audits', 'registries', 'findings', 'reports', 'vaults'];
+          await Promise.all(paths.map(path => clearCloudPath(path)));
+          setStatus({ type: 'success', message: 'Cloud Database Cleared Successfully.' });
+        } catch (e) {
+          setStatus({ type: 'error', message: 'Failed to clear cloud database.' });
+        } finally {
+          setIsProcessing(false);
+        }
       }
+    } else if (userInput !== null) {
+      alert("Unauthorized! Only the Designer can clear the cloud database.");
     }
   };
 
@@ -235,7 +248,7 @@ const SyncHub: React.FC = () => {
 
       {/* CLOUD VAULT SYNC */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        <div className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
+        <div className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 compliance-card ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
            <div className="flex items-center justify-between">
               <h3 className="text-2xl font-black uppercase tracking-tighter flex items-center gap-3">
                 <CloudSync className="w-6 h-6 text-blue-600" /> Cloud Vault Push
@@ -271,7 +284,7 @@ const SyncHub: React.FC = () => {
            </div>
         </div>
 
-        <div className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
+        <div className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 compliance-card ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
            <div className="flex items-center justify-between">
               <h3 className="text-2xl font-black uppercase tracking-tighter flex items-center gap-3">
                 <Download className="w-6 h-6 text-emerald-600" /> Cloud Vault Pull
@@ -298,7 +311,7 @@ const SyncHub: React.FC = () => {
            </button>
         </div>
 
-        <div className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 flex flex-col justify-center items-center text-center ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
+        <div className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 flex flex-col justify-center items-center text-center compliance-card ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
            <div className="bg-amber-500 p-6 rounded-3xl shadow-xl mb-6">
               <CloudUpload className="w-10 h-10 text-white" />
            </div>
@@ -361,7 +374,7 @@ const SyncHub: React.FC = () => {
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-        <section className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
+        <section className={`p-10 rounded-[4rem] border shadow-2xl space-y-8 compliance-card ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100'}`}>
            <div className="flex items-center justify-between">
               <h3 className="text-2xl font-black uppercase tracking-tighter flex items-center gap-3">
                 <Upload className="w-6 h-6 text-blue-600" /> Export Results

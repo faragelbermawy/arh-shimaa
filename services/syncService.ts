@@ -13,17 +13,20 @@ export const syncService = {
    * Uses no-cors mode to bypass CORS restrictions.
    */
   sendToGoogleSheets: async (data: any): Promise<boolean> => {
-    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwblKaA9zUgRNr4X52ZQXnirbs0M6E7fsXfMrf7-NjQOdNi-HmItxW9RQxS5MxV9M8/exec";
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyY_4W9r-RNPJzfgPvrE50bojFPIKOlDgfL3dh45xDYQo7o0pSc0EotHI9I6e8x8ag_/exec";
     
     try {
-      // Flatten data for easier spreadsheet consumption
+      // تجهيز البيانات لتطابق ما ينتظره السكريبت المطور
       const payload = {
-        ...data,
-        timestamp: data.timestamp || new Date().toLocaleString('en-GB'),
-        checkedItems: Array.isArray(data.checkedItems) ? data.checkedItems.join(', ') : data.checkedItems,
+        unit: data.unit || data.unitId || "N/A",
+        auditorName: data.auditorName || data.clinicalAuditor || "System",
+        personnelAudited: data.personnelAudited || data.personnel || "N/A",
+        staffGroup: data.staffGroup || "Others",
+        auditType: data.auditType || "General",
+        compliance: data.compliance || (data.score === 1 ? "Compliant" : "Non-Compliant"),
+        notes: data.notes || ""
       };
 
-      // We use fetch with no-cors. 
       await fetch(GOOGLE_SCRIPT_URL, {
         method: "POST",
         mode: "no-cors",

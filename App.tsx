@@ -16,6 +16,8 @@ import SyncHub from './components/SyncHub';
 import GoldenFiles from './components/GoldenFiles';
 import SplashScreen from './components/SplashScreen';
 import VisitorPdfViewer from './components/VisitorPdfViewer';
+import HandHygieneAudit from './components/HandHygieneAudit';
+import HandHygieneResults from './components/HandHygieneResults';
 import { storageService } from './services/storageService';
 
 const AppContent: React.FC = () => {
@@ -55,6 +57,8 @@ const AppContent: React.FC = () => {
           <Route path="/sync" element={<SyncHub />} />
           <Route path="/golden-files" element={<GoldenFiles />} />
           <Route path="/visitor-pdf" element={<VisitorPdfViewer />} />
+          <Route path="/hand-hygiene" element={<HandHygieneAudit />} />
+          <Route path="/hand-hygiene-results" element={<HandHygieneResults />} />
         </Routes>
       </Layout>
     </div>

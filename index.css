@@ -57,3 +57,42 @@
     height: 100dvh;
   }
 }
+
+/* هذا الكود سيجعل كل النصوص تظهر بوضوح بدون المساس بالتصميم */
+.dark p, .dark h1, .dark h2, .dark h3, .dark span {
+  color: #f1f5f9 !important; /* لون Slate فاتح جداً */
+}
+
+/* تحسين رؤية حدود البطاقات */
+.dark .card-container {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* إجبار النصوص على الوضوح التام في وضع الدارك مود */
+.dark .compliance-card span, 
+.dark .compliance-card p,
+.dark .compliance-card h3 {
+  color: #ffffff !important; /* أبيض ناصع */
+  opacity: 1 !important;
+  font-weight: 700 !important; /* زيادة سمك الخط للوضوح */
+}
+
+/* توضيح أيقونة الـ Checkmark */
+.dark .compliance-card svg {
+  stroke: #ffffff !important;
+  stroke-width: 3px;
+}
+
+/* إجبار النصوص على الظهور بوضوح داخل البطاقات البيضاء */
+.dark .bg-white span, 
+.dark .bg-white p, 
+.dark .bg-white h3, 
+.dark .bg-white .text-xs {
+  color: #0f172a !important; /* لون كحلي داكن جداً */
+  opacity: 1 !important;
+}
+
+/* توضيح أيقونات الاختيار (Checkmarks) */
+.dark .bg-white svg {
+  stroke: #0f172a !important;
+}

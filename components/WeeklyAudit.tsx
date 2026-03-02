@@ -34,6 +34,7 @@ const WeeklyAudit: React.FC = () => {
   const [filter, setFilter] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isDesigner, setIsDesigner] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -49,6 +50,7 @@ const WeeklyAudit: React.FC = () => {
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains('dark'));
     setIsAdmin(sessionStorage.getItem('is_admin_active') === 'true');
+    setIsDesigner(sessionStorage.getItem('is_designer_active') === 'true');
     
     // Initial load
     setAudits(storageService.getAudits());
@@ -58,25 +60,30 @@ const WeeklyAudit: React.FC = () => {
     const unsubscribe = onValue(auditsRef, (snapshot) => {
       const val = snapshot.val();
       if (val) {
-        const list: any[] = [];
+        const cloudList: any[] = [];
         Object.keys(val).forEach(key => {
           const item = val[key];
           if (item.id && (item.totalScore !== undefined || item.score !== undefined)) {
-            list.push({ id: key, ...item });
+            cloudList.push({ id: key, ...item });
           } else if (typeof item === 'object') {
             Object.keys(item).forEach(subKey => {
-              list.push({ id: subKey, auditType: key, ...item[subKey] });
+              cloudList.push({ id: subKey, auditType: key, ...item[subKey] });
             });
           }
         });
         
         setAudits(prev => {
-          const combined = [...prev];
-          list.forEach(item => {
-            if (!combined.find(c => c.id === item.id)) combined.push(item);
-          });
+          const localAudits = storageService.getAudits();
+          const auditMap = new Map();
+          
+          // Add local first
+          localAudits.forEach(a => auditMap.set(a.id, a));
+          // Add cloud (overwrites if same ID)
+          cloudList.forEach(a => auditMap.set(a.id, a));
+          
+          const final = Array.from(auditMap.values());
           // Sort by timestamp descending
-          return combined.sort((a, b) => {
+          return final.sort((a, b) => {
             const dateA = new Date(a.timestamp || 0).getTime();
             const dateB = new Date(b.timestamp || 0).getTime();
             return dateB - dateA;
@@ -159,31 +166,6 @@ const WeeklyAudit: React.FC = () => {
 
     storageService.saveAudit(localAudit);
     
-    // Create the expanded clinical report with all metadata for the Vault
-    const newDoc: ClinicalReport = {
-      id: `audit-${localAudit.id}`,
-      title: `${activeAuditType?.replace('-', ' ').toUpperCase()} AUDIT: ${department}`,
-      unitName: department,
-      reportDate: localTimestamp.split(',')[0],
-      timestamp: localTimestamp,
-      analysisDate: new Date().toISOString(),
-      extractedScores: {
-        handHygiene: localAudit.handHygieneScore,
-        ppe: localAudit.ppeScore,
-        environmental: localAudit.environmentalScore,
-        equipment: localAudit.equipmentScore
-      },
-      summary: notes || `Direct observation of ${activeAuditType?.replace('-', ' ')} compliance. All protocols verified for ${audienceName}.`,
-      status: 'analyzed',
-      isMdroFinding: false,
-      auditType: activeAuditType!,
-      checkedItems: localCheckedItems,
-      staffGroup: staffGroup,
-      auditor: auditor,
-      audienceName: audienceName
-    };
-    storageService.saveReport(newDoc);
-
     setAudits(storageService.getAudits());
     setShowSuccess(true);
     setActiveAuditType(null);
@@ -250,7 +232,10 @@ const WeeklyAudit: React.FC = () => {
 
   const handleDeleteAudit = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm("Purge this audit record from history?")) {
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
+
+    if (userInput === designerCode) {
       // Find the audit to get its type for the path
       const audit = audits.find(a => a.id === id);
       if (audit) {
@@ -259,14 +244,25 @@ const WeeklyAudit: React.FC = () => {
       }
       storageService.deleteAudit(id);
       setAudits(storageService.getAudits());
+      alert("Audit record purged by Designer.");
+    } else if (userInput !== null) {
+      alert("Unauthorized! Only the Designer can delete audits.");
     }
   };
 
   const purgeHistory = () => {
-    if (window.confirm("CRITICAL: Purge ALL manual audit history? Reports in vault will be preserved.")) {
-      const all = storageService.getAudits();
-      all.forEach(a => storageService.deleteAudit(a.id));
-      setAudits([]);
+    const designerCode = "2231994"; // الكود السري الموحد الخاص بك كمصمم
+    const userInput = prompt("Designer Authorization Required. Enter Access Code:");
+
+    if (userInput === designerCode) {
+      if (window.confirm("CRITICAL: Purge ALL manual audit history? Reports in vault will be preserved.")) {
+        const all = storageService.getAudits();
+        all.forEach(a => storageService.deleteAudit(a.id));
+        setAudits([]);
+        alert("Audit history purged by Designer.");
+      }
+    } else if (userInput !== null) {
+      alert("Unauthorized! Only the Designer can purge history.");
     }
   };
 
@@ -304,7 +300,7 @@ const WeeklyAudit: React.FC = () => {
         </div>
         {!activeAuditType && (
            <div className="flex items-center gap-4">
-              {isAdmin && audits.length > 0 && (
+              {isDesigner && audits.length > 0 && (
                 <button onClick={purgeHistory} className="bg-red-50 text-red-600 px-6 py-4 rounded-[1.5rem] font-black text-[9px] uppercase tracking-widest flex items-center gap-3">
                    <Trash2 className="w-4 h-4" /> Purge
                 </button>
@@ -351,12 +347,14 @@ const WeeklyAudit: React.FC = () => {
                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">{audit.timestamp} | {audit.staffGroup}</p>
                         </div>
                      </div>
-                     <button 
-                       onClick={(e) => handleDeleteAudit(audit.id, e)}
-                       className="p-4 rounded-2xl bg-red-50 text-red-600 opacity-0 group-hover/item:opacity-100 transition-all hover:bg-red-600 hover:text-white"
-                     >
-                        <Trash2 className="w-4 h-4" />
-                     </button>
+                     {isDesigner && (
+                       <button 
+                         onClick={(e) => handleDeleteAudit(audit.id, e)}
+                         className="p-4 rounded-2xl bg-red-50 text-red-600 opacity-0 group-hover/item:opacity-100 transition-all hover:bg-red-600 hover:text-white"
+                       >
+                          <Trash2 className="w-4 h-4" />
+                       </button>
+                     )}
                   </div>
                 ))}
               </div>
@@ -386,20 +384,22 @@ const WeeklyAudit: React.FC = () => {
               <div className="space-y-6">
                 <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Audited Staff Group</label>
                 <div className="flex flex-wrap gap-3">
-                  {STAFF_GROUPS.map(group => (
-                    <button
-                      key={group}
-                      type="button"
-                      onClick={() => setStaffGroup(group)}
-                      className={`px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                        staffGroup === group 
-                          ? 'bg-blue-600 text-white shadow-lg' 
-                          : isDarkMode ? 'bg-slate-950 text-slate-500 border border-white/5' : 'bg-slate-50 text-slate-400'
-                      }`}
-                    >
-                      {group}
-                    </button>
-                  ))}
+                  {STAFF_GROUPS.map(group => {
+                    const isSelected = staffGroup === group;
+                    const defaultStyle = "bg-white/5 border-white/10 text-slate-500";
+                    const selectedStyle = "bg-blue-600 border-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.3)] text-white";
+                    
+                    return (
+                      <button
+                        key={group}
+                        type="button"
+                        onClick={() => setStaffGroup(group)}
+                        className={`px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 border-2 ${isSelected ? selectedStyle : defaultStyle}`}
+                      >
+                        {group}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -411,15 +411,27 @@ const WeeklyAudit: React.FC = () => {
               <div className="space-y-10">
                  <h4 className="font-black text-sm uppercase flex items-center gap-5"><ClipboardCheck className="w-8 h-8 text-emerald-600" /> Compliance Checklist</h4>
                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                   {getActiveChecklistData().map((item, i) => (
-                     <button type="button" key={i} onClick={() => { const n = [...checklist]; n[i]=!n[i]; setChecklist(n); }} className={`w-full text-left p-8 rounded-[2.5rem] border flex items-center justify-between transition-all ${checklist[i] ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10' : 'bg-slate-50 dark:bg-slate-950 border-transparent'}`}>
-                        <div className="space-y-1">
-                           <span className="text-[12px] font-black uppercase block">{item.title}</span>
-                           <span className="text-[11px] font-bold text-slate-400 block font-arabic">{item.ar}</span>
-                        </div>
-                        <CheckCircle2 className={`w-8 h-8 ${checklist[i] ? 'text-emerald-600' : 'text-slate-200'}`} />
-                     </button>
-                   ))}
+                   {getActiveChecklistData().map((item, i) => {
+                     const isSelected = checklist[i];
+                     const defaultStyle = "bg-white/5 border-white/10 text-slate-500";
+                     const selectedStyle = "bg-emerald-500/20 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.2)] backdrop-blur-[10px]";
+                     const textStyle = "text-emerald-400 font-black z-10";
+                     
+                     return (
+                       <button 
+                         type="button" 
+                         key={i} 
+                         onClick={() => { const n = [...checklist]; n[i]=!n[i]; setChecklist(n); }} 
+                         className={`w-full text-left p-8 rounded-[2.5rem] border-2 transition-all duration-300 flex items-center justify-between compliance-card relative overflow-hidden ${isSelected ? selectedStyle : defaultStyle}`}
+                       >
+                          <div className={`space-y-1 ${isSelected ? 'z-10' : ''}`}>
+                             <span className={`text-[12px] uppercase block ${isSelected ? textStyle : 'font-black'}`}>{item.title}</span>
+                             <span className={`text-[11px] font-bold opacity-50 block font-arabic ${isSelected ? 'text-emerald-400' : ''}`}>{item.ar}</span>
+                          </div>
+                          <CheckCircle2 className={`w-8 h-8 transition-colors ${isSelected ? 'text-emerald-400 z-10' : 'text-slate-700'}`} />
+                       </button>
+                     );
+                   })}
                  </div>
               </div>
 
