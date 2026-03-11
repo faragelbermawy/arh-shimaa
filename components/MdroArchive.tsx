@@ -30,6 +30,7 @@ import { db, sendToCloud, deleteFromCloud } from '../services/firebase';
 import { ref, onValue } from "firebase/database";
 import { ClinicalReport, UserProgress } from '../types';
 import { jsPDF } from 'jspdf';
+import * as XLSX from 'xlsx';
 
 const DESIGNER_PHONE = "966508855131";
 
@@ -65,9 +66,24 @@ const MdroArchive: React.FC = () => {
           // Add cloud (overwrites if same ID)
           cloudList.forEach(r => reportMap.set(r.id, r));
           
-          const final = Array.from(reportMap.values());
+          const rawList = Array.from(reportMap.values());
+          
+          // Deduplicate by content: Unit + Organism + Date
+          const seen = new Set();
+          const unique = rawList.filter(r => {
+            // Filter out results without a valid date
+            if (!r.reportDate || r.reportDate === "Unknown Date" || r.reportDate.trim() === "") {
+              return false;
+            }
+            
+            const key = `${r.unitName?.toLowerCase()}-${r.mdroTransmission?.toLowerCase()}-${r.reportDate}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          
           // Sort by timestamp descending
-          return final.sort((a, b) => {
+          return unique.sort((a, b) => {
             const dateA = new Date(a.timestamp || 0).getTime();
             const dateB = new Date(b.timestamp || 0).getTime();
             return dateB - dateA;
@@ -81,7 +97,23 @@ const MdroArchive: React.FC = () => {
 
   const loadAllData = () => {
     const all = storageService.getReports();
-    setReports(all.filter(r => r.isMdroFinding));
+    const mdroOnly = all.filter(r => r.isMdroFinding);
+    
+    // Deduplicate by content: Unit + Organism + Date
+    const seen = new Set();
+    const unique = mdroOnly.filter(r => {
+      // Filter out results without a valid date
+      if (!r.reportDate || r.reportDate === "Unknown Date" || r.reportDate.trim() === "") {
+        return false;
+      }
+      
+      const key = `${r.unitName?.toLowerCase()}-${r.mdroTransmission?.toLowerCase()}-${r.reportDate}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    setReports(unique);
     setProgress(storageService.getProgress());
   };
 
@@ -164,6 +196,47 @@ const MdroArchive: React.FC = () => {
     return { blob: doc.output('blob'), filename };
   };
 
+  const exportToExcel = () => {
+    if (reports.length === 0) {
+      alert("No data to export.");
+      return;
+    }
+
+    // Format data for Excel
+    const data = reports.map(r => ({
+      'ID': r.id,
+      'Organism': r.mdroTransmission,
+      'Unit/Ward': r.unitName,
+      'Finding Date': r.reportDate,
+      'Recorded On': r.timestamp,
+      'Auditor': r.auditor || 'N/A',
+      'Staff Group': r.staffGroup || 'N/A',
+      'Audience': r.audienceName || 'N/A',
+      'Summary': r.summary
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "MDRO Findings");
+
+    // Fix column widths
+    const wscols = [
+      {wch: 25}, // ID
+      {wch: 30}, // Organism
+      {wch: 20}, // Unit
+      {wch: 15}, // Finding Date
+      {wch: 25}, // Recorded On
+      {wch: 20}, // Auditor
+      {wch: 20}, // Staff Group
+      {wch: 20}, // Audience
+      {wch: 50}  // Summary
+    ];
+    worksheet['!cols'] = wscols;
+
+    XLSX.writeFile(workbook, `MDRO_Archive_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
+    showLocalToast("Excel Exported Successfully");
+  };
+
   const handleDownloadReport = async (report: ClinicalReport) => {
     const { blob, filename } = await createPDFBlob(report);
     const url = URL.createObjectURL(blob);
@@ -241,6 +314,21 @@ const MdroArchive: React.FC = () => {
           fileData: fileData,
           fileMimeType: file.type
         };
+
+        // Check for duplicates before saving
+        const existing = storageService.getReports().find(r => 
+          r.isMdroFinding && 
+          r.unitName?.toLowerCase() === newReport.unitName?.toLowerCase() &&
+          r.mdroTransmission?.toLowerCase() === newReport.mdroTransmission?.toLowerCase() &&
+          r.reportDate === newReport.reportDate
+        );
+
+        if (existing) {
+          setIsProcessing(false);
+          showLocalToast("Duplicate Finding Detected - Skipping");
+          return;
+        }
+
         storageService.saveReport(newReport);
         
         // Sync to Firebase
@@ -388,6 +476,20 @@ const MdroArchive: React.FC = () => {
                 </div>
              </div>
            )}
+        </div>
+      )}
+
+      {/* Export All Button */}
+      {reports.length > 0 && (
+        <div className="pt-10 border-t border-slate-100 dark:border-white/5 flex justify-center">
+           <button 
+             type="button" 
+             onClick={exportToExcel}
+             className="bg-emerald-600 hover:bg-emerald-500 text-white px-12 py-6 rounded-[2.5rem] font-black text-sm uppercase tracking-widest flex items-center gap-4 shadow-2xl shadow-emerald-900/20 active:scale-95 transition-all cursor-pointer group"
+           >
+              <FileDown className="w-6 h-6 group-hover:bounce" />
+              Export All Findings to Excel
+           </button>
         </div>
       )}
     </div>

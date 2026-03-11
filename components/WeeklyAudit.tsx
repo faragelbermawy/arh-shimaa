@@ -15,7 +15,8 @@ import {
   ShieldAlert,
   Users,
   AlertTriangle,
-  Trash2
+  Trash2,
+  FileDown
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AuditRecord, AuditType, ClinicalReport } from '../types';
@@ -25,6 +26,7 @@ import { storageService } from '../services/storageService';
 import { syncService } from '../services/syncService';
 import { db, saveData, sendToCloud, deleteFromCloud } from '../services/firebase';
 import { ref, onValue } from "firebase/database";
+import * as XLSX from 'xlsx';
 
 const WeeklyAudit: React.FC = () => {
   const navigate = useNavigate();
@@ -94,6 +96,44 @@ const WeeklyAudit: React.FC = () => {
 
     return () => unsubscribe();
   }, []);
+
+  const exportToExcel = () => {
+    if (audits.length === 0) {
+      alert("No data to export.");
+      return;
+    }
+
+    // Format data for Excel
+    const data = audits.map(a => ({
+      'ID': a.id,
+      'Type': a.auditType,
+      'Auditor': a.auditor || 'N/A',
+      'Audience': a.audienceName || 'N/A',
+      'Staff Group': a.staffGroup || 'N/A',
+      'Score %': a.totalScore || a.score || 0,
+      'Timestamp': a.timestamp,
+      'Notes': a.notes || ''
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Weekly Audits");
+
+    // Fix column widths
+    const wscols = [
+      {wch: 25}, // ID
+      {wch: 20}, // Type
+      {wch: 20}, // Auditor
+      {wch: 20}, // Audience
+      {wch: 20}, // Staff Group
+      {wch: 15}, // Score
+      {wch: 25}, // Timestamp
+      {wch: 50}  // Notes
+    ];
+    worksheet['!cols'] = wscols;
+
+    XLSX.writeFile(workbook, `Weekly_Audits_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
 
   const getActiveChecklistData = () => {
     switch(activeAuditType) {
@@ -359,6 +399,19 @@ const WeeklyAudit: React.FC = () => {
                 ))}
               </div>
           </section>
+
+          {audits.length > 0 && (
+            <div className="pt-10 border-t border-slate-100 dark:border-white/5 flex justify-center">
+               <button 
+                 type="button" 
+                 onClick={exportToExcel}
+                 className="bg-emerald-600 hover:bg-emerald-500 text-white px-12 py-6 rounded-[2.5rem] font-black text-sm uppercase tracking-widest flex items-center gap-4 shadow-2xl shadow-emerald-900/20 active:scale-95 transition-all cursor-pointer group"
+               >
+                  <FileDown className="w-6 h-6 group-hover:bounce" />
+                  Export All Audits to Excel
+               </button>
+            </div>
+          )}
         </div>
       ) : (
         <form onSubmit={handleSaveAudit} className="animate-in zoom-in-95">

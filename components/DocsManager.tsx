@@ -48,6 +48,7 @@ import { gemini } from '../services/geminiService';
 import { storageService } from '../services/storageService';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import * as XLSX from 'xlsx';
 
 const DESIGNER_PHONE = "966508855131";
 
@@ -141,8 +142,25 @@ const DocsManager: React.FC = () => {
         
         // Robust deduplication across all paths
         const dedupeMap = new Map();
+        const mdroSeen = new Set();
+        
         Object.values(aggregatedData).flat().forEach(item => {
-          if (item.id) dedupeMap.set(item.id, item);
+          if (!item.id) return;
+          
+          // Special deduplication for MDRO findings by content
+          const isMdro = item.isMdroFinding || item.sourcePath === 'findings' || item.auditType === 'mdro-finding';
+          if (isMdro) {
+            // Filter out results without a valid date
+            if (!item.reportDate || item.reportDate === "Unknown Date" || item.reportDate.trim() === "") {
+              return;
+            }
+            
+            const contentKey = `${item.unitName?.toLowerCase()}-${item.mdroTransmission?.toLowerCase()}-${item.reportDate}`;
+            if (mdroSeen.has(contentKey)) return;
+            mdroSeen.add(contentKey);
+          }
+          
+          dedupeMap.set(item.id, item);
         });
         
         const allCombined = Array.from(dedupeMap.values());
@@ -387,6 +405,49 @@ const DocsManager: React.FC = () => {
     showToast("Report Downloaded");
   };
 
+  const exportAllToExcel = () => {
+    if (allReports.length === 0) {
+      showToast("No data to export.");
+      return;
+    }
+
+    // Format data for Excel
+    const data = allReports.map(r => ({
+      'ID': r.id,
+      'Category': CATEGORIES.find(c => c.id === (r.auditType || r.sourcePath))?.label || r.auditType || 'Uncategorized',
+      'Unit/Department': r.unitName || r.department || 'N/A',
+      'Auditor': r.auditor || 'N/A',
+      'Personnel Audited': r.audienceName || 'N/A',
+      'Staff Group': r.staffGroup || 'N/A',
+      'Score %': r.totalScore || r.score || 0,
+      'Result/Finding': r.isMdroFinding ? r.mdroTransmission : 'Audit',
+      'Timestamp': r.timestamp,
+      'Summary/Notes': r.summary || r.notes || ''
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Clinical Vault Data");
+
+    // Fix column widths
+    const wscols = [
+      {wch: 25}, // ID
+      {wch: 20}, // Category
+      {wch: 25}, // Unit
+      {wch: 20}, // Auditor
+      {wch: 20}, // Personnel
+      {wch: 20}, // Staff Group
+      {wch: 15}, // Score
+      {wch: 25}, // Result
+      {wch: 25}, // Timestamp
+      {wch: 60}  // Summary
+    ];
+    worksheet['!cols'] = wscols;
+
+    XLSX.writeFile(workbook, `Clinical_Vault_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
+    showToast("Excel Export Successful");
+  };
+
   const handleShareReport = async (report: any, platform: 'whatsapp' | 'system') => {
     const isAudit = !report.isMdroFinding;
     const score = report.totalScore || report.score || 0;
@@ -429,6 +490,7 @@ const DocsManager: React.FC = () => {
             id: `rep_${Date.now()}`,
             title: analysis.isMdroFinding ? `MDRO Alert: ${analysis.mdroTransmission}` : `Audit: ${analysis.unitName}`,
             unitName: analysis.unitName,
+            reportDate: analysis.reportDate || "Unknown Date",
             timestamp: new Date().toLocaleString(),
             analysisDate: new Date().toISOString(),
             summary: analysis.summary,
@@ -450,6 +512,22 @@ const DocsManager: React.FC = () => {
             staffGroup: analysis.staffGroup || "N/A",
             checkedItems: analysis.checkedItems
           };
+
+          // Check for duplicates if it's an MDRO finding
+          if (newReport.isMdroFinding) {
+            const existing = storageService.getReports().find(r => 
+              r.isMdroFinding && 
+              r.unitName?.toLowerCase() === newReport.unitName?.toLowerCase() &&
+              r.mdroTransmission?.toLowerCase() === newReport.mdroTransmission?.toLowerCase() &&
+              r.reportDate === newReport.reportDate
+            );
+
+            if (existing) {
+              setIsProcessing(false);
+              showToast("Duplicate Finding Detected - Skipping");
+              return;
+            }
+          }
 
           // Save locally
           await storageService.saveReport(newReport);
@@ -543,6 +621,15 @@ const DocsManager: React.FC = () => {
 
   const getCategoryCount = (catId: CategoryKey) => {
     return allReports.filter(r => r.auditType === catId || r.sourcePath === catId).length;
+  };
+
+  const getCategoryCompliance = (catId: CategoryKey) => {
+    const reports = allReports.filter(r => r.auditType === catId || r.sourcePath === catId);
+    const validReports = reports.filter(r => (r.totalScore !== undefined || r.score !== undefined));
+    if (validReports.length === 0) return null;
+    
+    const sum = validReports.reduce((acc, r) => acc + (r.totalScore || r.score || 0), 0);
+    return Math.round(sum / validReports.length);
   };
 
   if (loading) return (
@@ -655,6 +742,7 @@ const DocsManager: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {CATEGORIES.map((cat) => {
             const count = getCategoryCount(cat.id);
+            const compliance = getCategoryCompliance(cat.id);
             return (
               <button
                 key={cat.id}
@@ -671,9 +759,19 @@ const DocsManager: React.FC = () => {
                   {cat.label}
                 </h3>
                 
-                <p className="text-gray-500 dark:text-gray-400 text-sm font-bold uppercase tracking-widest">
-                  {count} RECORDS
-                </p>
+                <div className="flex justify-between items-end">
+                  <p className="text-gray-500 dark:text-gray-400 text-sm font-bold uppercase tracking-widest">
+                    {count} RECORDS
+                  </p>
+                  {compliance !== null && (
+                    <div className="flex flex-col items-end">
+                      <span className="text-[10px] font-black text-blue-500 dark:text-blue-400 uppercase tracking-widest mb-1">Compliance</span>
+                      <span className={`text-2xl font-black ${compliance >= 90 ? 'text-emerald-500' : compliance >= 75 ? 'text-amber-500' : 'text-red-500'}`}>
+                        {compliance}%
+                      </span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Decorative Gradient on Hover */}
                 <div className={`absolute bottom-0 left-0 h-1 w-0 group-hover:w-full transition-all duration-500 bg-gradient-to-r ${cat.bgGradient}`} />
@@ -771,6 +869,20 @@ const DocsManager: React.FC = () => {
               <button onClick={() => navigate('/docs')} className="mt-4 px-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest">Back to Categories</button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Export All Button */}
+      {allReports.length > 0 && (
+        <div className="mt-12 flex justify-center">
+           <button 
+             type="button" 
+             onClick={exportAllToExcel}
+             className="bg-emerald-600 hover:bg-emerald-500 text-white px-12 py-6 rounded-[2.5rem] font-black text-sm uppercase tracking-widest flex items-center gap-4 shadow-2xl shadow-emerald-900/20 active:scale-95 transition-all cursor-pointer group"
+           >
+              <FileDown className="w-6 h-6 group-hover:bounce" />
+              Export All Vault to Excel
+           </button>
         </div>
       )}
 

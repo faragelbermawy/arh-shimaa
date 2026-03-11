@@ -424,7 +424,7 @@ const SyncHub: React.FC = () => {
              value={importToken} 
              onChange={(e) => setImportToken(e.target.value)} 
              placeholder="Paste any protocol key here to begin merging..." 
-             className="w-full bg-white/5 border border-white/10 rounded-[2.5rem] p-8 text-xs font-mono outline-none h-40 scrollbar-hide focus:ring-1 focus:ring-emerald-500 transition-all placeholder:text-slate-700" 
+             className="w-full bg-white/5 border border-white/10 rounded-[2.5rem] p-8 text-xs font-mono outline-none h-40 focus:ring-1 focus:ring-emerald-500 transition-all placeholder:text-slate-700" 
            />
            
            <button 

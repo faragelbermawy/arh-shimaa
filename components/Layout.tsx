@@ -291,7 +291,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </div>
 
         <ul className={`
-          flex items-center gap-2 overflow-x-auto scrollbar-hide snap-x snap-mandatory px-4 pb-4 pt-8 md:py-8
+          flex items-center gap-2 overflow-x-auto snap-x snap-mandatory px-4 pb-4 pt-8 md:py-8
           md:flex-col md:overflow-visible md:px-3 md:snap-none md:gap-4
         `}>
           {navItems.map((item) => {
@@ -317,7 +317,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       {/* Main content scroll area with dynamic height adjustment */}
       <main 
         ref={mainContentRef} 
-        className="flex-1 mt-[calc(4rem+env(safe-area-inset-top))] md:mt-20 md:pl-24 lg:pl-64 overflow-y-auto overflow-x-hidden scrollbar-hide"
+        className="flex-1 mt-[calc(4rem+env(safe-area-inset-top))] md:mt-20 md:pl-24 lg:pl-64 overflow-y-auto overflow-x-hidden"
       >
         <div className="max-w-7xl mx-auto p-4 md:p-10 pb-[120px]">
           {children}

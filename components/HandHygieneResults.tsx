@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from 'recharts';
-import { FileText, Calendar, Share2, Activity, Trash2, Loader2, TrendingUp, Download } from 'lucide-react';
+import { FileText, Calendar, Share2, Activity, Trash2, Loader2, TrendingUp, Download, FileDown } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 const HandHygieneResults: React.FC = () => {
   const [reports, setReports] = useState<any[]>([]);
@@ -70,6 +71,46 @@ const HandHygieneResults: React.FC = () => {
     } finally {
       setExportingId(null);
     }
+  };
+
+  const exportToExcel = () => {
+    if (reports.length === 0) {
+      alert("No data to export.");
+      return;
+    }
+
+    // Format data for Excel
+    const data = reports.map(r => ({
+      'ID': r.id,
+      'Date': r.date,
+      'Time': r.time,
+      'Overall Compliance %': r.overall,
+      'Moment 1 %': r.stats?.[0]?.rate || 0,
+      'Moment 2 %': r.stats?.[1]?.rate || 0,
+      'Moment 3 %': r.stats?.[2]?.rate || 0,
+      'Moment 4 %': r.stats?.[3]?.rate || 0,
+      'Moment 5 %': r.stats?.[4]?.rate || 0
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Hand Hygiene Audits");
+
+    // Fix column widths
+    const wscols = [
+      {wch: 25}, // ID
+      {wch: 15}, // Date
+      {wch: 15}, // Time
+      {wch: 20}, // Overall
+      {wch: 15}, // M1
+      {wch: 15}, // M2
+      {wch: 15}, // M3
+      {wch: 15}, // M4
+      {wch: 15}  // M5
+    ];
+    worksheet['!cols'] = wscols;
+
+    XLSX.writeFile(workbook, `Hand_Hygiene_Audits_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const deleteReport = (reportId: string) => {
@@ -235,6 +276,19 @@ const HandHygieneResults: React.FC = () => {
           })
         )}
       </div>
+
+      {/* Export All Button */}
+      {reports.length > 0 && (
+        <div className="mt-12 pt-10 border-t border-white/5 flex justify-center">
+           <button 
+             onClick={exportToExcel}
+             className="bg-emerald-600 hover:bg-emerald-500 text-white px-12 py-6 rounded-[2.5rem] font-black text-sm uppercase tracking-widest flex items-center gap-4 shadow-2xl shadow-emerald-900/20 active:scale-95 transition-all cursor-pointer group"
+           >
+              <FileDown className="w-6 h-6 group-hover:bounce" />
+              Export All Audits to Excel
+           </button>
+        </div>
+      )}
     </div>
   );
 };

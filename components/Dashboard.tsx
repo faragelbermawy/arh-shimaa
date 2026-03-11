@@ -93,8 +93,29 @@ const Dashboard: React.FC = () => {
 
       // Deduplicate by ID to ensure accurate counts
       const reportMap = new Map();
-      allFindings.forEach(r => reportMap.set(r.id, r));
-      allReports.forEach(r => reportMap.set(r.id, r));
+      const mdroSeen = new Set();
+      
+      // Findings deduplication by content: Unit + Organism + Date
+      allFindings.forEach(r => {
+        // Filter out results without a valid date
+        if (!r.reportDate || r.reportDate === "Unknown Date" || r.reportDate.trim() === "") {
+          return;
+        }
+        
+        const contentKey = `${r.unitName?.toLowerCase()}-${r.mdroTransmission?.toLowerCase()}-${r.reportDate}`;
+        if (!mdroSeen.has(contentKey)) {
+          mdroSeen.add(contentKey);
+          reportMap.set(r.id, r);
+        }
+      });
+      
+      // Other reports deduplication by ID
+      allReports.forEach(r => {
+        if (!reportMap.has(r.id)) {
+          reportMap.set(r.id, r);
+        }
+      });
+      
       const finalReports = Array.from(reportMap.values());
 
       const auditMap = new Map();
